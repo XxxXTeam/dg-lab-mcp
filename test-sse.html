@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DG-LAB MCP SSE 测试</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: #1a1a2e; color: #eee; }
+    h1 { color: #00d4ff; margin-bottom: 20px; }
+    .container { max-width: 1400px; margin: 0 auto; }
+    .panel { background: #16213e; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
+    .panel h2 { margin: 0 0 10px 0; color: #00d4ff; font-size: 16px; }
+    .panel h3 { margin: 10px 0 8px 0; color: #aaa; font-size: 13px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+    .status { padding: 8px 12px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
+    .status.connected { background: #0f5132; color: #75b798; }
+    .status.disconnected { background: #842029; color: #ea868f; }
+    .status.waiting { background: #664d03; color: #ffda6a; }
+    #output { background: #0f0f23; border-radius: 4px; padding: 10px; height: 350px; overflow-y: auto; font-family: monospace; font-size: 13px; }
+    .log-entry { margin: 4px 0; padding: 4px 8px; border-radius: 3px; word-break: break-all; }
+    .log-entry.event { background: #1e3a5f; }
+    .log-entry.send { background: #2d4a3e; }
+    .log-entry.receive { background: #3d2d4a; }
+    .log-entry.error { background: #4a2d2d; }
+    button { background: #00d4ff; color: #000; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: bold; margin: 3px; font-size: 12px; }
+    button:hover { background: #00a8cc; }
+    button:disabled { background: #555; color: #888; cursor: not-allowed; }
+    .btn-danger { background: #dc3545; color: #fff; }
+    .btn-danger:hover { background: #bb2d3b; }
+    .btn-device { background: #6f42c1; color: #fff; }
+    .btn-device:hover { background: #5a32a3; }
+    .btn-control { background: #fd7e14; color: #000; }
+    .btn-control:hover { background: #e96b02; }
+    .btn-waveform { background: #20c997; color: #000; }
+    .btn-waveform:hover { background: #1aa179; }
+    input, textarea, select { background: #0f0f23; border: 1px solid #333; color: #eee; padding: 8px; border-radius: 4px; width: 100%; margin-bottom: 8px; }
+    textarea { height: 80px; font-family: monospace; font-size: 12px; }
+    .row { display: flex; gap: 15px; flex-wrap: wrap; }
+    .col { flex: 1; min-width: 350px; }
+    .col-wide { flex: 1.5; min-width: 450px; }
+    label { display: block; margin-bottom: 5px; color: #aaa; font-size: 13px; }
+    .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 5px; }
+    .input-group { display: flex; gap: 5px; margin-bottom: 8px; align-items: center; }
+    .input-group input, .input-group select { flex: 1; margin-bottom: 0; }
+    .input-group button { white-space: nowrap; }
+    .small-input { width: 100px !important; flex: none !important; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔌 DG-LAB MCP SSE 测试工具</h1>
+    
+    <div class="row">
+      <div class="col">
+        <div class="panel">
+          <h2>连接状态</h2>
+          <div id="status" class="status disconnected">未连接</div>
+          <div>
+            <button id="connectBtn" onclick="connect()">连接 SSE</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled class="btn-danger">断开</button>
+          </div>
+          <div style="margin-top: 10px;">
+            <label>Session ID:</label>
+            <input type="text" id="sessionId" readonly placeholder="连接后自动获取">
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>MCP 协议</h2>
+          <div class="tools-grid">
+            <button onclick="sendInitialize()">Initialize</button>
+            <button onclick="sendToolsList()">List Tools</button>
+            <button onclick="sendPing()">Ping</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>🔌 设备工具 (Device Tools)</h2>
+          <div class="tools-grid">
+            <button class="btn-device" onclick="callTool('dg_connect', {})">dg_connect</button>
+            <button class="btn-device" onclick="callTool('dg_list_devices', {})">dg_list_devices</button>
+          </div>
+          
+          <h3>dg_set_alias - 设置设备别名</h3>
+          <div class="input-group">
+            <input type="text" id="aliasDeviceId" placeholder="Device ID">
+            <input type="text" id="aliasValue" placeholder="别名">
+            <button class="btn-device" onclick="setAlias()">设置</button>
+          </div>
+          
+          <h3>dg_find_device - 按别名查找</h3>
+          <div class="input-group">
+            <input type="text" id="findAlias" placeholder="别名">
+            <button class="btn-device" onclick="findDevice()">查找</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>⚡ 控制工具 (Control Tools)</h2>
+          
+          <h3>dg_set_strength - 设置强度</h3>
+          <div class="input-group">
+            <input type="text" id="strengthDeviceId" placeholder="Device ID">
+          </div>
+          <div class="input-group">
+            <select id="strengthChannel" class="small-input">
+              <option value="A">A通道</option>
+              <option value="B">B通道</option>
+            </select>
+            <select id="strengthMode" class="small-input">
+              <option value="set">set</option>
+              <option value="increase">increase</option>
+              <option value="decrease">decrease</option>
+            </select>
+            <input type="number" id="strengthValue" placeholder="值 0-200" class="small-input" min="0" max="200">
+            <button class="btn-control" onclick="setStrength()">发送</button>
+          </div>
+          
+          <h3>dg_send_waveform - 发送波形</h3>
+          <div class="input-group">
+            <input type="text" id="waveDeviceId" placeholder="Device ID">
+            <select id="waveChannel" class="small-input">
+              <option value="A">A通道</option>
+              <option value="B">B通道</option>
+            </select>
+          </div>
+          <textarea id="waveHexData" placeholder='波形HEX数组，如: ["0A0A0A0A64646464","0A0A0A0A64646464"]'>["0A0A0A0A64646464","0A0A0A0A64646464"]</textarea>
+          <button class="btn-control" onclick="sendWaveformData()">发送波形</button>
+          
+          <h3>dg_clear_waveform - 清空波形队列</h3>
+          <div class="input-group">
+            <input type="text" id="clearDeviceId" placeholder="Device ID">
+            <select id="clearChannel" class="small-input">
+              <option value="A">A通道</option>
+              <option value="B">B通道</option>
+            </select>
+            <button class="btn-control" onclick="clearWaveform()">清空</button>
+          </div>
+          
+          <h3>dg_get_status - 获取设备状态</h3>
+          <div class="input-group">
+            <input type="text" id="statusDeviceId" placeholder="Device ID">
+            <button class="btn-control" onclick="getStatus()">获取状态</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="panel">
+          <h2>🌊 波形工具 (Waveform Tools)</h2>
+          <button class="btn-waveform" onclick="callTool('dg_list_waveforms', {})">dg_list_waveforms</button>
+          
+          <h3>dg_parse_waveform - 解析波形</h3>
+          <div class="input-group">
+            <input type="text" id="parseName" placeholder="波形名称">
+          </div>
+          <textarea id="parseData" placeholder="Dungeonlab+pulse:...">Dungeonlab+pulse:0,1,8=10,20,4,1,1/50.00-0,75.00-1,100.00-0,50.00-1</textarea>
+          <button class="btn-waveform" onclick="parseWaveform()">解析并保存</button>
+          
+          <h3>dg_get_waveform - 获取波形</h3>
+          <div class="input-group">
+            <input type="text" id="getWaveformName" placeholder="波形名称">
+            <button class="btn-waveform" onclick="getWaveform()">获取</button>
+          </div>
+          
+          <h3>dg_delete_waveform - 删除波形</h3>
+          <div class="input-group">
+            <input type="text" id="deleteWaveformName" placeholder="波形名称">
+            <button class="btn-waveform btn-danger" onclick="deleteWaveform()">删除</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>自定义请求</h2>
+          <label>JSON-RPC 请求:</label>
+          <textarea id="customRequest">{"jsonrpc":"2.0","id":1,"method":"tools/list"}</textarea>
+          <button onclick="sendCustom()">发送</button>
+        </div>
+      </div>
+
+      <div class="col-wide">
+        <div class="panel">
+          <h2>日志输出 <button onclick="clearLog()" style="float: right; font-size: 11px; padding: 4px 8px;">清空</button></h2>
+          <div id="output"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let eventSource = null;
+    let sessionId = null;
+    let requestId = 1;
+
+    function log(message, type = 'event') {
+      const output = document.getElementById('output');
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      const time = new Date().toLocaleTimeString();
+      let displayMsg = message;
+      if (type === 'receive' && message.includes('{')) {
+        try {
+          const jsonStart = message.indexOf('{');
+          const prefix = message.substring(0, jsonStart);
+          const jsonStr = message.substring(jsonStart);
+          const parsed = JSON.parse(jsonStr);
+          displayMsg = prefix + JSON.stringify(parsed, null, 2);
+        } catch {}
+      }
+      entry.innerHTML = `<strong>[${time}]</strong> <pre style="margin:0;white-space:pre-wrap;">${displayMsg}</pre>`;
+      output.appendChild(entry);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    function clearLog() { document.getElementById('output').innerHTML = ''; }
+
+    function updateStatus(status, text) {
+      const el = document.getElementById('status');
+      el.className = `status ${status}`;
+      el.textContent = text;
+    }
+
+    function connect() {
+      if (eventSource) eventSource.close();
+      updateStatus('waiting', '连接中...');
+      log('正在连接 SSE...', 'event');
+      eventSource = new EventSource('http://localhost:3000/sse');
+      eventSource.onopen = () => log('SSE 连接已建立', 'event');
+      eventSource.addEventListener('endpoint', (e) => {
+        log(`收到 endpoint: ${e.data}`, 'receive');
+        const match = e.data.match(/sessionId=([^&]+)/);
+        if (match) {
+          sessionId = match[1];
+          document.getElementById('sessionId').value = sessionId;
+          updateStatus('connected', '已连接');
+          document.getElementById('connectBtn').disabled = true;
+          document.getElementById('disconnectBtn').disabled = false;
+          log(`Session ID: ${sessionId}`, 'event');
+        }
+      });
+      eventSource.addEventListener('message', (e) => log(`收到消息: ${e.data}`, 'receive'));
+      eventSource.onerror = () => {
+        log('SSE 连接错误', 'error');
+        updateStatus('disconnected', '连接错误');
+        document.getElementById('connectBtn').disabled = false;
+        document.getElementById('disconnectBtn').disabled = true;
+      };
+    }
+
+    function disconnect() {
+      if (eventSource) { eventSource.close(); eventSource = null; }
+      sessionId = null;
+      document.getElementById('sessionId').value = '';
+      updateStatus('disconnected', '已断开');
+      document.getElementById('connectBtn').disabled = false;
+      document.getElementById('disconnectBtn').disabled = true;
+      log('已断开连接', 'event');
+    }
+
+    async function sendRequest(request) {
+      if (!sessionId) { log('错误: 未连接，请先连接 SSE', 'error'); return; }
+      const url = `http://localhost:3000/message?sessionId=${sessionId}`;
+      log(`发送: ${JSON.stringify(request, null, 2)}`, 'send');
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request)
+        });
+        const result = await response.json();
+        log(`HTTP 响应: ${JSON.stringify(result)}`, 'receive');
+      } catch (err) { log(`发送失败: ${err.message}`, 'error'); }
+    }
+
+    function sendInitialize() {
+      sendRequest({
+        jsonrpc: '2.0', id: requestId++, method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test-client', version: '1.0.0' } }
+      });
+    }
+    function sendToolsList() { sendRequest({ jsonrpc: '2.0', id: requestId++, method: 'tools/list' }); }
+    function sendPing() { sendRequest({ jsonrpc: '2.0', id: requestId++, method: 'ping' }); }
+
+    function callTool(name, args) {
+      sendRequest({ jsonrpc: '2.0', id: requestId++, method: 'tools/call', params: { name, arguments: args } });
+    }
+
+    // Device Tools
+    function setAlias() {
+      const deviceId = document.getElementById('aliasDeviceId').value;
+      const alias = document.getElementById('aliasValue').value;
+      if (!deviceId || !alias) { log('错误: 请输入 Device ID 和别名', 'error'); return; }
+      callTool('dg_set_alias', { deviceId, alias });
+    }
+    function findDevice() {
+      const alias = document.getElementById('findAlias').value;
+      if (!alias) { log('错误: 请输入别名', 'error'); return; }
+      callTool('dg_find_device', { alias });
+    }
+
+    // Control Tools
+    function setStrength() {
+      const deviceId = document.getElementById('strengthDeviceId').value;
+      const channel = document.getElementById('strengthChannel').value;
+      const mode = document.getElementById('strengthMode').value;
+      const value = parseInt(document.getElementById('strengthValue').value);
+      if (!deviceId) { log('错误: 请输入 Device ID', 'error'); return; }
+      if (isNaN(value)) { log('错误: 请输入有效的强度值', 'error'); return; }
+      callTool('dg_set_strength', { deviceId, channel, mode, value });
+    }
+    function sendWaveformData() {
+      const deviceId = document.getElementById('waveDeviceId').value;
+      const channel = document.getElementById('waveChannel').value;
+      const hexDataStr = document.getElementById('waveHexData').value;
+      if (!deviceId) { log('错误: 请输入 Device ID', 'error'); return; }
+      try {
+        const waveforms = JSON.parse(hexDataStr);
+        callTool('dg_send_waveform', { deviceId, channel, waveforms });
+      } catch (err) { log(`错误: 波形数据JSON解析失败 - ${err.message}`, 'error'); }
+    }
+    function clearWaveform() {
+      const deviceId = document.getElementById('clearDeviceId').value;
+      const channel = document.getElementById('clearChannel').value;
+      if (!deviceId) { log('错误: 请输入 Device ID', 'error'); return; }
+      callTool('dg_clear_waveform', { deviceId, channel });
+    }
+    function getStatus() {
+      const deviceId = document.getElementById('statusDeviceId').value;
+      if (!deviceId) { log('错误: 请输入 Device ID', 'error'); return; }
+      callTool('dg_get_status', { deviceId });
+    }
+
+    // Waveform Tools
+    function parseWaveform() {
+      const name = document.getElementById('parseName').value || 'test-wave-' + Date.now();
+      const hexData = document.getElementById('parseData').value;
+      if (!hexData) { log('错误: 请输入波形数据', 'error'); return; }
+      callTool('dg_parse_waveform', { hexData, name });
+    }
+    function getWaveform() {
+      const name = document.getElementById('getWaveformName').value;
+      if (!name) { log('错误: 请输入波形名称', 'error'); return; }
+      callTool('dg_get_waveform', { name });
+    }
+    function deleteWaveform() {
+      const name = document.getElementById('deleteWaveformName').value;
+      if (!name) { log('错误: 请输入波形名称', 'error'); return; }
+      if (confirm(`确定要删除波形 "${name}" 吗？`)) callTool('dg_delete_waveform', { name });
+    }
+    function sendCustom() {
+      try {
+        const request = JSON.parse(document.getElementById('customRequest').value);
+        if (!request.id) request.id = requestId++;
+        sendRequest(request);
+      } catch (err) { log(`JSON 解析错误: ${err.message}`, 'error'); }
+    }
+  </script>
+</body>
+</html>
