@@ -84,8 +84,8 @@ async function main() {
   // 注册工具处理函数
   registerToolHandlers(server.jsonRpcHandler, toolManager);
 
-  // 注册设备工具
-  registerDeviceTools(toolManager, sessionManager, wsServer);
+  // 注册设备工具（传入公网IP配置）
+  registerDeviceTools(toolManager, sessionManager, wsServer, config.publicIp || undefined);
   console.log("[工具] 设备工具已注册");
 
   // 注册控制工具

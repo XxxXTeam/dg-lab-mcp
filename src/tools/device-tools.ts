@@ -31,13 +31,16 @@ function getLocalIP(): string {
  * @param toolManager - 工具管理器
  * @param sessionManager - 会话管理器
  * @param wsServer - WebSocket 服务器
+ * @param publicIp - 公网IP（可选，用于生成二维码）
  */
 export function registerDeviceTools(
   toolManager: ToolManager,
   sessionManager: SessionManager,
-  wsServer: DGLabWSServer
+  wsServer: DGLabWSServer,
+  publicIp?: string
 ): void {
-  const localIP = getLocalIP();
+  // 优先使用公网IP，否则使用本地IP
+  const ipAddress = publicIp || getLocalIP();
 
   // dg_connect - 创建新的设备连接
   toolManager.registerTool(
@@ -65,7 +68,7 @@ export function registerDeviceTools(
         });
 
         // 生成二维码 URL
-        const qrCodeUrl = wsServer.getQRCodeUrl(clientId, localIP);
+        const qrCodeUrl = wsServer.getQRCodeUrl(clientId, ipAddress);
 
         return createToolResult(
           JSON.stringify({

@@ -65,12 +65,18 @@ bun run src/index.ts
 
 ## 环境变量
 
+可以通过创建 `.env` 文件配置服务器（参考 `.env.example`）：
+
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `PORT` | 3323 | 服务端口 (HTTP/WebSocket 共享) |
+| `PUBLIC_IP` | (空) | 公网IP地址，用于生成二维码。留空则自动检测本地IP。如果服务器部署在公网或需要远程访问，请填写公网IP |
 | `SSE_PATH` | /sse | SSE 端点路径 |
 | `POST_PATH` | /message | POST 端点路径 |
 | `HEARTBEAT_INTERVAL` | 30000 | 心跳间隔 (ms) |
+| `STALE_DEVICE_TIMEOUT` | 3600000 | 设备过期超时 (ms) |
+| `SESSION_STORE_PATH` | ./data/sessions.json | 会话存储路径 |
+| `WAVEFORM_STORE_PATH` | ./data/waveforms.json | 波形存储路径 |
 
 ## 开发
 

@@ -9,6 +9,8 @@
 export interface ServerConfig {
   /** HTTP/WebSocket 服务端口（共享） */
   port: number;
+  /** 公网IP地址（用于生成二维码，留空则自动检测本地IP） */
+  publicIp: string;
   /** SSE 端点路径 */
   ssePath: string;
   /** POST 端点路径 */
@@ -57,6 +59,7 @@ function getEnvNumber(key: string, defaultValue: number): number {
 export function loadConfig(): ServerConfig {
   const config: ServerConfig = {
     port: getEnvNumber("PORT", 3323),
+    publicIp: getEnvString("PUBLIC_IP", ""),
     ssePath: getEnvString("SSE_PATH", "/sse"),
     postPath: getEnvString("POST_PATH", "/message"),
     sessionStorePath: getEnvString("SESSION_STORE_PATH", "./data/sessions.json"),
@@ -77,6 +80,19 @@ export function loadConfig(): ServerConfig {
 function validateConfig(config: ServerConfig): void {
   if (config.port < 1 || config.port > 65535) {
     throw new Error(`端口无效: ${config.port}，必须在 1-65535 范围内`);
+  }
+
+  // 验证公网IP格式（如果提供）
+  if (config.publicIp) {
+    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    if (!ipv4Regex.test(config.publicIp)) {
+      throw new Error(`公网IP格式无效: ${config.publicIp}，必须是有效的IPv4地址`);
+    }
+    // 验证每个数字段在0-255范围内
+    const parts = config.publicIp.split(".");
+    if (parts.some(part => parseInt(part, 10) > 255)) {
+      throw new Error(`公网IP格式无效: ${config.publicIp}，每段必须在0-255范围内`);
+    }
   }
 
   if (!config.ssePath.startsWith("/")) {
