@@ -380,80 +380,89 @@ export function parseWaveform(data: string, name: string): ParsedWaveform {
 
 /**
  * 将小节转换为设备用的 HEX 波形
+ * 
+ * 核心概念：
+ * - 每个形状点 = 100ms 的输出强度（4 个 25ms 采样）
+ * - 脉冲元 = 所有形状点组成的一个完整波形周期
+ * - 小节 = 脉冲元循环重复播放，直到小节时长结束
+ * - 脉冲元会完整播放，即使超过设定的小节时长
+ * 
  * 每个 HEX 波形是 16 个字符（8 字节）:
  * - 4 字节: 频率值（4 x 25ms = 100ms）
  * - 4 字节: 强度值（4 x 25ms = 100ms）
  * 
  * @param sections - 小节数组
- * @param playbackSpeed - 播放速率
+ * @param _playbackSpeed - 播放速率（保留参数，当前未使用）
  * @returns HEX 波形数组
  */
-function convertToHexWaveforms(sections: WaveformSection[], playbackSpeed: number = 1): string[] {
+function convertToHexWaveforms(sections: WaveformSection[], _playbackSpeed: number = 1): string[] {
   const hexWaveforms: string[] = [];
-  
-  // 播放速率决定每个 bar 的毫秒数
-  // 1 = 100ms/bar, 2 = 50ms/bar, 4 = 25ms/bar
-  // 注意: _msPerBar 当前未使用，保留用于未来播放速率支持
-  const _msPerBar = playbackSpeed === 4 ? 25 : playbackSpeed === 2 ? 50 : 100;
 
   for (const section of sections) {
     if (section.shape.length === 0) continue;
 
-    const shapeCount = section.shape.length;
-    const duration = section.duration; // 单位 100ms
+    const shapeCount = section.shape.length; // 脉冲元的形状点数量
+    const pulseElementDuration = shapeCount; // 脉冲元时长 = 形状点数 x 100ms
+    const sectionDuration = section.duration; // 小节设定时长（单位 100ms）
     const startFreq = section.startFrequency;
     const endFreq = section.endFrequency;
     const freqMode = section.frequencyMode;
 
+    // 计算需要多少个完整的脉冲元来覆盖小节时长
+    // 脉冲元总是会完整播放，即使超过设定时长
+    const pulseElementCount = Math.max(1, Math.ceil(sectionDuration / pulseElementDuration));
+    const actualDuration = pulseElementCount * pulseElementDuration; // 实际播放时长
+
     const waveformFreq: number[] = [];
     const waveformStrength: number[] = [];
 
-    // 为每个 100ms 周期生成采样
-    for (let t = 0; t < duration; t++) {
-      // 每 100ms 生成 4 个采样（每个 25ms）
-      for (let n = 0; n < 4; n++) {
-        // 计算小节内的进度
-        const totalProgress = (t + n / 4) / duration;
-        
-        // 根据进度计算形状索引
-        const shapeProgress = totalProgress * shapeCount;
-        const shapeIdx = Math.min(Math.floor(shapeProgress), shapeCount - 1);
-        const nextShapeIdx = Math.min(shapeIdx + 1, shapeCount - 1);
-        const interpFactor = shapeProgress - shapeIdx;
-
-        // 获取形状点
+    // 遍历每个脉冲元
+    for (let elementIdx = 0; elementIdx < pulseElementCount; elementIdx++) {
+      // 遍历脉冲元内的每个形状点（每个形状点 = 100ms）
+      for (let shapeIdx = 0; shapeIdx < shapeCount; shapeIdx++) {
         const currentPoint = section.shape[shapeIdx];
-        const nextPoint = section.shape[nextShapeIdx];
-        
-        // 插值计算强度
-        const startStrength = currentPoint?.strength ?? 0;
-        const endStrength = nextPoint?.strength ?? startStrength;
-        const strength = Math.round(startStrength + (endStrength - startStrength) * interpFactor);
-        waveformStrength.push(Math.max(0, Math.min(100, strength)));
+        const strength = currentPoint?.strength ?? 0;
 
-        // 根据模式计算频率
+        // 当前在整个小节中的时间位置（单位 100ms）
+        const currentTime = elementIdx * pulseElementDuration + shapeIdx;
+        // 小节内的进度（0-1）
+        const sectionProgress = currentTime / actualDuration;
+        // 脉冲元内的进度（0-1）
+        const elementProgress = shapeIdx / shapeCount;
+
+        // 根据频率模式计算频率
         let freq: number;
         switch (freqMode) {
           case 1: // 固定 - 使用起始频率
             freq = getOutputValue(startFreq);
             break;
-          case 2: // 节内渐变 - 整个小节内渐变
-            freq = getOutputValue(startFreq + (endFreq - startFreq) * totalProgress);
+          case 2: // 节内渐变 - 整个小节内频率从 startFreq 渐变到 endFreq
+            freq = getOutputValue(startFreq + (endFreq - startFreq) * sectionProgress);
             break;
-          case 3: // 元内渐变 - 每个形状元素内渐变
-            freq = getOutputValue(startFreq + (endFreq - startFreq) * interpFactor);
+          case 3: // 元内渐变 - 每个脉冲元内频率从 startFreq 渐变到 endFreq，然后重置
+            freq = getOutputValue(startFreq + (endFreq - startFreq) * elementProgress);
             break;
-          case 4: // 元间渐变 - 元素之间阶跃变化
-            freq = getOutputValue(startFreq + (endFreq - startFreq) * (shapeIdx / shapeCount));
+          case 4: // 元间渐变 - 脉冲元内频率固定，但从第一个脉冲元到最后一个脉冲元频率渐变
+            {
+              const elementProgress4 = pulseElementCount > 1 
+                ? elementIdx / (pulseElementCount - 1) 
+                : 0;
+              freq = getOutputValue(startFreq + (endFreq - startFreq) * elementProgress4);
+            }
             break;
           default:
             freq = getOutputValue(startFreq);
         }
-        waveformFreq.push(Math.round(freq));
+
+        // 每个形状点生成 4 个 25ms 采样（强度相同，频率相同）
+        for (let n = 0; n < 4; n++) {
+          waveformStrength.push(Math.max(0, Math.min(100, Math.round(strength))));
+          waveformFreq.push(Math.round(freq));
+        }
       }
     }
 
-    // 组合成 8 字节 HEX 字符串（每 100ms 4 个频率 + 4 个强度）
+    // 组合成 8 字节 HEX 字符串（每 100ms = 4 个频率 + 4 个强度）
     for (let i = 0; i < waveformFreq.length; i += 4) {
       const freqHex = [
         waveformFreq[i] ?? 10,
