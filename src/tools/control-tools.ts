@@ -326,7 +326,7 @@ export function registerControlTools(
 - boundToApp: 是否已绑定APP（必须为true才能控制设备）
 - strengthA/B: 当前A/B通道强度
 - strengthLimitA/B: A/B通道强度上限（由APP设置，不可超过）
-建议在dg_connect后轮询此接口检查boundToApp状态。`,
+建议在dg_connect后在用户说已完成后使用此接口检查boundToApp状态。`,
     {
       type: "object",
       properties: {
