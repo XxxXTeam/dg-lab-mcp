@@ -130,7 +130,7 @@ export function createServer(config: ServerConfig): MCPServer {
 
     async stop(): Promise<void> {
       return new Promise((resolve, reject) => {
-        if (httpServer) {
+        if (httpServer && httpServer.listening) {
           httpServer.close((err) => {
             if (err) reject(err);
             else resolve();
