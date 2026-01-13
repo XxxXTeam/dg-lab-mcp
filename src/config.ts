@@ -30,7 +30,7 @@ function getEnvNumber(key: string, defaultValue: number): number {
 
 export function loadConfig(): ServerConfig {
   const config: ServerConfig = {
-    port: getEnvNumber("PORT", 3000),
+    port: getEnvNumber("PORT", 3323),
     wsPort: getEnvNumber("WS_PORT", 4562),
     ssePath: getEnvString("SSE_PATH", "/sse"),
     postPath: getEnvString("POST_PATH", "/message"),
