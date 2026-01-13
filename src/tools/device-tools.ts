@@ -1,6 +1,6 @@
 /**
  * @fileoverview 设备管理工具
- * @description 实现 dg_connect, dg_list_devices, dg_set_alias, dg_find_device
+ * @description 实现 dg_connect, dg_list_devices, dg_set_alias, dg_find_device, dg_disconnect
  */
 
 import type { ToolManager } from "../tool-manager";
@@ -207,6 +207,79 @@ export function registerDeviceTools(
         JSON.stringify({
           devices,
           count: devices.length,
+        })
+      );
+    }
+  );
+
+  // dg_disconnect - 断开并删除设备连接
+  toolManager.registerTool(
+    "dg_disconnect",
+    "断开并删除设备连接，可以通过deviceId或alias指定设备",
+    {
+      type: "object",
+      properties: {
+        deviceId: {
+          type: "string",
+          description: "设备ID（与alias二选一）",
+        },
+        alias: {
+          type: "string",
+          description: "设备别名（与deviceId二选一）",
+        },
+      },
+      required: [],
+    },
+    async (params) => {
+      const deviceId = params.deviceId as string | undefined;
+      const alias = params.alias as string | undefined;
+
+      // 必须提供 deviceId 或 alias 之一
+      if (!deviceId && !alias) {
+        return createToolError("必须提供 deviceId 或 alias 参数之一");
+      }
+
+      // 如果提供了两个参数，优先使用 deviceId
+      if (deviceId && alias) {
+        return createToolError("只能提供 deviceId 或 alias 参数之一，不能同时提供");
+      }
+
+      let sessionsToDelete: string[] = [];
+
+      if (deviceId) {
+        // 通过 deviceId 查找
+        const session = sessionManager.getSession(deviceId);
+        if (!session) {
+          return createToolError(`设备不存在: ${deviceId}`);
+        }
+        sessionsToDelete.push(deviceId);
+      } else if (alias) {
+        // 通过 alias 查找
+        const sessions = sessionManager.findByAlias(alias);
+        if (sessions.length === 0) {
+          return createToolError(`未找到别名为 "${alias}" 的设备`);
+        }
+        sessionsToDelete = sessions.map(s => s.deviceId);
+      }
+
+      // 删除所有匹配的会话
+      const deletedDevices: Array<{ deviceId: string; alias: string | null }> = [];
+      for (const id of sessionsToDelete) {
+        const session = sessionManager.getSession(id);
+        if (session) {
+          deletedDevices.push({
+            deviceId: session.deviceId,
+            alias: session.alias,
+          });
+          sessionManager.deleteSession(id);
+        }
+      }
+
+      return createToolResult(
+        JSON.stringify({
+          success: true,
+          deletedCount: deletedDevices.length,
+          deletedDevices,
         })
       );
     }
