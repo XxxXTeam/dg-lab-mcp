@@ -2,11 +2,13 @@
  * @fileoverview DG-LAB WebSocket 服务器
  * @description 自托管的 WebSocket 服务器，基于 temp_dg_plugin/app.js
  * 替代连接外部 WS 服务器 - 我们就是 WS 服务器
+ * 支持独立端口或附加到现有 HTTP 服务器
  */
 
 import { WebSocketServer, WebSocket } from "ws";
 import { v4 as uuidv4 } from "uuid";
 import type { IncomingMessage } from "http";
+import type { Server as HttpServer } from "http";
 
 /** DG-LAB WebSocket 消息类型 */
 export type DGLabMessageType = "bind" | "msg" | "heartbeat" | "break" | "error";
@@ -38,10 +40,15 @@ interface WaveformTimer {
 
 /** WebSocket 服务器选项 */
 export interface WSServerOptions {
-  port: number;
+  /** 独立端口（如果不附加到 HTTP 服务器） */
+  port?: number;
+  /** 心跳间隔（毫秒） */
   heartbeatInterval?: number;
+  /** 强度更新回调 */
   onStrengthUpdate?: (controllerId: string, a: number, b: number, limitA: number, limitB: number) => void;
+  /** 反馈回调 */
   onFeedback?: (controllerId: string, index: number) => void;
+  /** 绑定变化回调 */
   onBindChange?: (controllerId: string, appId: string | null) => void;
 }
 
@@ -54,7 +61,8 @@ export class DGLabWSServer {
   private relations: Map<string, string> = new Map();
   private waveformTimers: Map<string, WaveformTimer> = new Map();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private options: Required<WSServerOptions>;
+  private options: WSServerOptions & { heartbeatInterval: number };
+  private attachedPort: number = 0;
 
   constructor(options: WSServerOptions) {
     this.options = {
@@ -66,16 +74,46 @@ export class DGLabWSServer {
     };
   }
 
-  /** 启动 WebSocket 服务器 */
+  /** 启动独立的 WebSocket 服务器（使用独立端口） */
   start(): void {
+    if (!this.options.port) {
+      throw new Error("独立启动需要指定 port");
+    }
     this.wss = new WebSocketServer({ port: this.options.port });
     this.wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
       this.handleConnection(ws, req);
     });
+    this.startHeartbeat();
+    this.attachedPort = this.options.port;
+    console.log(`[WS 服务器] 独立监听端口 ${this.options.port}`);
+  }
+
+  /** 附加到现有的 HTTP 服务器（共享端口） */
+  attachToServer(httpServer: HttpServer, port: number): void {
+    this.wss = new WebSocketServer({ noServer: true });
+    
+    // 处理 HTTP 服务器的 upgrade 事件
+    httpServer.on("upgrade", (request, socket, head) => {
+      // 所有 WebSocket 升级请求都由我们处理
+      this.wss!.handleUpgrade(request, socket, head, (ws) => {
+        this.wss!.emit("connection", ws, request);
+      });
+    });
+
+    this.wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+      this.handleConnection(ws, req);
+    });
+
+    this.startHeartbeat();
+    this.attachedPort = port;
+    console.log(`[WS 服务器] 已附加到 HTTP 服务器，共享端口 ${port}`);
+  }
+
+  /** 启动心跳定时器 */
+  private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
       this.sendHeartbeats();
     }, this.options.heartbeatInterval);
-    console.log(`[WS 服务器] 监听端口 ${this.options.port}`);
   }
 
   /** 停止 WebSocket 服务器 */
@@ -387,17 +425,17 @@ export class DGLabWSServer {
 
   /** 获取 APP 扫描的二维码 URL */
   getQRCodeUrl(controllerId: string, host: string): string {
-    const wsUrl = `ws://${host}:${this.options.port}/${controllerId}`;
+    const wsUrl = `ws://${host}:${this.attachedPort}/${controllerId}`;
     return `https://www.dungeon-lab.com/app-download.php#DGLAB-SOCKET#${wsUrl}`;
   }
 
   /** 获取 APP 连接的 WebSocket URL */
   getWSUrl(controllerId: string, host: string): string {
-    return `ws://${host}:${this.options.port}/${controllerId}`;
+    return `ws://${host}:${this.attachedPort}/${controllerId}`;
   }
 
   /** 获取服务器端口 */
-  getPort(): number { return this.options.port; }
+  getPort(): number { return this.attachedPort; }
 
   /** 获取客户端数量 */
   getClientCount(): number { return this.clients.size; }

@@ -1,10 +1,12 @@
 /**
  * @fileoverview HTTP 服务器
- * @description 提供 SSE 和 POST 端点的 HTTP 服务器
+ * @description 提供 SSE、POST 端点和 WebSocket 的 HTTP 服务器
+ * SSE/POST 用于 MCP 协议，WebSocket 用于 DG-LAB APP 连接
  */
 
 import express from "express";
 import type { Request, Response, Application } from "express";
+import type { Server as HttpServer } from "http";
 import type { ServerConfig } from "./config";
 import { SSETransport } from "./sse-transport";
 import { JsonRpcHandler } from "./jsonrpc-handler";
@@ -17,6 +19,8 @@ import type { JsonRpcResponse } from "./types/jsonrpc";
 export interface MCPServer {
   /** Express 应用实例 */
   app: Application;
+  /** HTTP 服务器实例 */
+  httpServer: HttpServer | null;
   /** SSE 传输层 */
   sseTransport: SSETransport;
   /** JSON-RPC 处理器 */
@@ -103,28 +107,31 @@ export function createServer(config: ServerConfig): MCPServer {
     });
   });
 
-  let server: ReturnType<typeof app.listen> | null = null;
+  let httpServer: HttpServer | null = null;
 
   return {
     app,
+    httpServer: null,
     sseTransport,
     jsonRpcHandler,
 
     async start(): Promise<void> {
       return new Promise((resolve) => {
-        server = app.listen(config.port, () => {
+        httpServer = app.listen(config.port, () => {
           console.log(`[服务器] MCP SSE 服务器监听端口 ${config.port}`);
           console.log(`[服务器] SSE 端点: ${config.ssePath}`);
           console.log(`[服务器] POST 端点: ${config.postPath}`);
           resolve();
         });
+        // 更新实例引用
+        (this as MCPServer).httpServer = httpServer;
       });
     },
 
     async stop(): Promise<void> {
       return new Promise((resolve, reject) => {
-        if (server) {
-          server.close((err) => {
+        if (httpServer) {
+          httpServer.close((err) => {
             if (err) reject(err);
             else resolve();
           });

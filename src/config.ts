@@ -7,10 +7,8 @@
  * 服务器配置接口
  */
 export interface ServerConfig {
-  /** HTTP 服务端口 */
+  /** HTTP/WebSocket 服务端口（共享） */
   port: number;
-  /** WebSocket 服务端口 */
-  wsPort: number;
   /** SSE 端点路径 */
   ssePath: string;
   /** POST 端点路径 */
@@ -59,7 +57,6 @@ function getEnvNumber(key: string, defaultValue: number): number {
 export function loadConfig(): ServerConfig {
   const config: ServerConfig = {
     port: getEnvNumber("PORT", 3323),
-    wsPort: getEnvNumber("WS_PORT", 4562),
     ssePath: getEnvString("SSE_PATH", "/sse"),
     postPath: getEnvString("POST_PATH", "/message"),
     sessionStorePath: getEnvString("SESSION_STORE_PATH", "./data/sessions.json"),
@@ -80,10 +77,6 @@ export function loadConfig(): ServerConfig {
 function validateConfig(config: ServerConfig): void {
   if (config.port < 1 || config.port > 65535) {
     throw new Error(`端口无效: ${config.port}，必须在 1-65535 范围内`);
-  }
-
-  if (config.wsPort < 1 || config.wsPort > 65535) {
-    throw new Error(`WebSocket 端口无效: ${config.wsPort}，必须在 1-65535 范围内`);
   }
 
   if (!config.ssePath.startsWith("/")) {
