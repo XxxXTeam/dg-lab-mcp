@@ -1,0 +1,238 @@
+/**
+ * @fileoverview 应用初始化模块
+ * @description 封装应用的初始化逻辑，包括依赖注入和模块组装
+ */
+
+import type { ServerConfig } from "./config";
+import { loadConfig, getEffectiveIP, getLocalIP } from "./config";
+import { createServer, broadcastNotification, type MCPServer } from "./server";
+import { registerMCPProtocol } from "./mcp-protocol";
+import { ToolManager, registerToolHandlers } from "./tool-manager";
+import { SessionManager } from "./session-manager";
+import { DGLabWSServer } from "./ws-server";
+import { registerDeviceTools } from "./tools/device-tools";
+import { registerControlTools } from "./tools/control-tools";
+import { getWaveformTools, initWaveformStorage } from "./tools/waveform-tools";
+import { WaveformStorage, loadWaveforms } from "./waveform-storage";
+import { ConfigError, ErrorCode } from "./errors";
+
+/**
+ * 应用实例，包含所有核心组件的引用
+ */
+export interface App {
+  config: ServerConfig;
+  server: MCPServer;
+  toolManager: ToolManager;
+  sessionManager: SessionManager;
+  wsServer: DGLabWSServer;
+  waveformStorage: WaveformStorage;
+  shutdown: () => Promise<void>;
+}
+
+/**
+ * 创建并初始化应用
+ * 
+ * 这个函数负责：
+ * 1. 加载配置
+ * 2. 创建各个核心组件
+ * 3. 注册工具和协议处理器
+ * 4. 设置组件间的回调关系
+ * 
+ * @returns 初始化完成的应用实例
+ */
+export function createApp(): App {
+  // 加载配置
+  const config = loadConfig();
+  
+  // 打印配置信息
+  printConfigInfo(config);
+
+  // 创建 MCP SSE 的 HTTP 服务器
+  const server = createServer(config);
+
+  // 创建工具管理器
+  const toolManager = new ToolManager(() => {
+    broadcastNotification(server, "notifications/tools/list_changed");
+  });
+
+  // 创建会话管理器（仅内存，1 小时 TTL）
+  const sessionManager = new SessionManager();
+  console.log("[会话] 仅内存模式（1 小时 TTL）");
+
+  // 创建 WebSocket 服务器
+  const wsServer = createWSServer(config, sessionManager);
+
+  // 初始化波形存储
+  const waveformStorage = initWaveforms(config);
+
+  // 注册协议和工具
+  registerProtocolAndTools(server, toolManager, sessionManager, wsServer, config);
+
+  // 创建关闭函数
+  const shutdown = async () => {
+    console.log("\n[服务器] 正在关闭...");
+    wsServer.stop();
+    sessionManager.stopCleanupTimer();
+    sessionManager.clearAll();
+    await server.stop();
+    console.log("[服务器] 已停止");
+  };
+
+  return {
+    config,
+    server,
+    toolManager,
+    sessionManager,
+    wsServer,
+    waveformStorage,
+    shutdown,
+  };
+}
+
+/**
+ * 打印配置信息
+ */
+function printConfigInfo(config: ServerConfig): void {
+  console.log("=".repeat(50));
+  console.log("DG-LAB MCP SSE 服务器");
+  console.log("=".repeat(50));
+  console.log(`[配置] 端口: ${config.port}`);
+  console.log(`[配置] SSE 路径: ${config.ssePath}`);
+  console.log(`[配置] POST 路径: ${config.postPath}`);
+  
+  const effectiveIP = getEffectiveIP(config);
+  const localIP = getLocalIP();
+  console.log(`[配置] 本地 IP: ${localIP}`);
+  console.log(`[配置] 公网 IP: ${config.publicIp || "(未设置)"}`);
+  console.log(`[配置] 实际使用 IP: ${effectiveIP}`);
+}
+
+/**
+ * 创建 WebSocket 服务器并设置回调
+ */
+function createWSServer(config: ServerConfig, sessionManager: SessionManager): DGLabWSServer {
+  return new DGLabWSServer({
+    heartbeatInterval: config.heartbeatInterval,
+    onStrengthUpdate: (controllerId, a, b, limitA, limitB) => {
+      console.log(`[WS] ${controllerId} 强度: A=${a}/${limitA}, B=${b}/${limitB}`);
+      const session = sessionManager.getSessionByClientId(controllerId);
+      if (session) {
+        sessionManager.updateStrength(session.deviceId, a, b, limitA, limitB);
+      }
+    },
+    onFeedback: (controllerId, index) => {
+      console.log(`[WS] ${controllerId} 反馈: ${index}`);
+    },
+    onBindChange: (controllerId, appId) => {
+      console.log(`[WS] ${controllerId} 绑定: ${appId || "已解绑"}`);
+      const session = sessionManager.getSessionByClientId(controllerId);
+      if (session) {
+        sessionManager.updateConnectionState(session.deviceId, {
+          boundToApp: !!appId,
+          targetId: appId,
+        });
+      }
+    },
+    onControllerDisconnect: (controllerId) => {
+      console.log(`[WS] 控制器断开: ${controllerId}`);
+      const session = sessionManager.getSessionByClientId(controllerId);
+      if (session) {
+        sessionManager.updateConnectionState(session.deviceId, {
+          connected: false,
+          boundToApp: false,
+          clientId: null,
+          targetId: null,
+        });
+      }
+    },
+    onAppDisconnect: (appId) => {
+      console.log(`[WS] APP 断开: ${appId}`);
+      const sessions = sessionManager.listSessions();
+      for (const session of sessions) {
+        if (session.targetId === appId) {
+          sessionManager.updateConnectionState(session.deviceId, {
+            boundToApp: false,
+            targetId: null,
+          });
+        }
+      }
+    },
+  });
+}
+
+/**
+ * 初始化波形存储
+ */
+function initWaveforms(config: ServerConfig): WaveformStorage {
+  const waveformStorage = new WaveformStorage();
+  if (loadWaveforms(waveformStorage, config.waveformStorePath)) {
+    console.log(`[波形] 从磁盘加载了 ${waveformStorage.list().length} 个波形`);
+  }
+  initWaveformStorage(waveformStorage, config.waveformStorePath);
+  return waveformStorage;
+}
+
+/**
+ * 注册 MCP 协议和所有工具
+ */
+function registerProtocolAndTools(
+  server: MCPServer,
+  toolManager: ToolManager,
+  sessionManager: SessionManager,
+  wsServer: DGLabWSServer,
+  config: ServerConfig
+): void {
+  // 注册 MCP 协议处理函数
+  registerMCPProtocol(server.jsonRpcHandler, () => {
+    console.log("[MCP] 客户端已初始化");
+  });
+
+  // 注册工具处理函数
+  registerToolHandlers(server.jsonRpcHandler, toolManager);
+
+  // 注册设备工具
+  registerDeviceTools(toolManager, sessionManager, wsServer, config.publicIp || undefined);
+  console.log("[工具] 设备工具已注册");
+
+  // 注册控制工具
+  registerControlTools(toolManager, sessionManager, wsServer);
+  console.log("[工具] 控制工具已注册");
+
+  // 注册波形工具
+  const waveformTools = getWaveformTools();
+  for (const tool of waveformTools) {
+    toolManager.registerTool(tool.name, tool.description, tool.inputSchema, tool.handler);
+  }
+  console.log("[工具] 波形工具已注册");
+  console.log(`[工具] 总计: ${toolManager.toolCount}`);
+}
+
+/**
+ * 启动应用
+ * 
+ * 启动 HTTP 服务器并附加 WebSocket 服务器。
+ * 
+ * @param app - 应用实例
+ */
+export async function startApp(app: App): Promise<void> {
+  // 启动 HTTP 服务器
+  await app.server.start();
+
+  // 将 WebSocket 服务器附加到 HTTP 服务器
+  if (app.server.httpServer) {
+    app.wsServer.attachToServer(app.server.httpServer, app.config.port);
+  } else {
+    throw new ConfigError("HTTP 服务器未启动，无法附加 WebSocket", {
+      code: ErrorCode.CONFIG_LOAD_FAILED,
+      context: { port: app.config.port },
+    });
+  }
+
+  // 打印就绪信息
+  console.log("=".repeat(50));
+  console.log("服务器就绪");
+  console.log(`SSE: http://localhost:${app.config.port}${app.config.ssePath}`);
+  console.log(`POST: http://localhost:${app.config.port}${app.config.postPath}`);
+  console.log(`WebSocket: ws://localhost:${app.config.port}`);
+  console.log("=".repeat(50));
+}

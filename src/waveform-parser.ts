@@ -1,24 +1,51 @@
 /**
  * @fileoverview 波形解析器模块
- * @description 处理 Dungeonlab+pulse: 文本格式的波形数据解析（APP v2.0+）
  * 
- * 格式: Dungeonlab+pulse:setting=section+section+section...
- * - header: Dungeonlab+pulse:
- * - setting: 小节休息时长,播放速率,高低频平衡=
- * - section: 频率范围1,频率范围2,小节时长,频率模式,小节开关/脉冲元形状值-是否锚点,...
- * - section-split: +section+
+ * 处理 DG-LAB APP 导出的 Dungeonlab+pulse: 文本格式波形数据。
+ * 这是 APP v2.0+ 使用的波形格式，包含完整的波形定义信息。
+ * 
+ * 波形格式概述：
+ * ```
+ * Dungeonlab+pulse:setting=section+section+section...
+ * ```
+ * 
+ * 各部分说明：
+ * - header: `Dungeonlab+pulse:` 固定前缀
+ * - setting: `小节休息时长,播放速率,高低频平衡=` 全局设置
+ * - section: `频率范围1,频率范围2,小节时长,频率模式,小节开关/脉冲元形状值-是否锚点,...`
+ * - section-split: `+section+` 小节分隔符
+ * 
+ * 核心概念：
+ * - 形状点：定义 100ms 内的输出强度（0-100）
+ * - 脉冲元：由多个形状点组成的一个完整波形周期
+ * - 小节：脉冲元循环播放，直到达到设定时长
+ * - 频率模式：控制频率在时间轴上的变化方式
  * 
  * @example
+ * // 典型的波形数据
  * Dungeonlab+pulse:18,1,8=27,7,32,3,1/0-1,11.1-0,22.2-0,...+section+0,20,39,2,1/0-1,100-1
  */
 
+import { WaveformError, ErrorCode } from "./errors";
+
 // ============================================================================
 // 数据集
+// 这些数据集来自 DG-LAB APP 规范，用于将索引值转换为实际参数
 // ============================================================================
 
 /**
- * 频率数据集（索引 0-83 → 实际频率值 10-1000）
- * 基于 DG-LAB APP 规范
+ * 频率数据集
+ * 
+ * 将索引值（0-83）映射到实际频率值（10-1000 Hz）。
+ * APP 中的频率滑块使用索引，需要通过此表转换为设备可用的频率值。
+ * 
+ * 索引分布特点：
+ * - 0-9: 10-19 Hz（低频段，步进 1）
+ * - 10-39: 20-78 Hz（中低频段，步进 2）
+ * - 40-49: 80-150 Hz（中频段，步进不均匀）
+ * - 50-69: 160-500 Hz（中高频段，步进 20）
+ * - 70-79: 550-1000 Hz（高频段，步进 50）
+ * - 80-83: 1000 Hz（上限）
  */
 export const FREQUENCY_DATASET: number[] = [
   10, 11, 12, 13, 14, 15, 16, 17, 18, 19,  // 0-9
@@ -33,8 +60,10 @@ export const FREQUENCY_DATASET: number[] = [
 ];
 
 /**
- * 时长数据集（索引 0-99 → 实际时长，单位 100ms）
- * 基于 DG-LAB APP 规范
+ * 时长数据集
+ * 
+ * 将索引值（0-99）映射到实际时长（1-100，单位 100ms）。
+ * 例如：索引 32 对应 3.3 秒的小节时长。
  */
 export const DURATION_DATASET: number[] = Array.from({ length: 100 }, (_, i) => i + 1);
 
@@ -44,18 +73,32 @@ export const DURATION_DATASET: number[] = Array.from({ length: 100 }, (_, i) => 
 
 /**
  * 全局波形设置
+ * 
+ * 这些设置影响整个波形的播放行为，在波形数据的开头定义。
  */
 export interface WaveformGlobalSettings {
-  /** 小节休息时长（0-100 → 0-10 秒） */
+  /** 
+   * 小节休息时长
+   * 范围 0-100，对应 0-10 秒。小节播放完毕后的静默时间。
+   */
   sectionRestTime: number;
-  /** 播放速率（1,2,4 → 100ms,50ms,25ms）- 仅 3.0 设备 */
+  /** 
+   * 播放速率
+   * 1=100ms, 2=50ms, 4=25ms 采样间隔。仅 3.0 设备支持。
+   */
   playbackSpeed: number;
-  /** 高低频平衡（1-16）- 仅 2.0 设备 */
+  /** 
+   * 高低频平衡
+   * 范围 1-16，影响输出的频率特性。仅 2.0 设备使用。
+   */
   frequencyBalance: number;
 }
 
 /**
  * 波形元数据
+ * 
+ * 包含波形的全局设置和各小节的参数索引。
+ * 这些数据用于重建波形或进行分析。
  */
 export interface WaveformMetadata {
   /** 全局设置 */
@@ -82,18 +125,30 @@ export interface WaveformMetadata {
 
 /**
  * 波形形状数据点
+ * 
+ * 定义脉冲元中单个时间点的输出强度。
+ * 每个形状点对应 100ms 的输出时间。
  */
 export interface WaveformShapePoint {
-  /** 强度值（3.0 设备为 0-100） */
+  /** 
+   * 强度值
+   * 范围 0-100，表示该时间点的输出强度百分比。
+   */
   strength: number;
-  /** 是否为锚点（0=普通点, 1=锚点） */
+  /** 
+   * 是否为锚点
+   * 锚点在 APP 编辑器中用于固定关键帧，不影响实际输出。
+   */
   isAnchor: boolean;
-  /** 兼容性字段：形状类型（与 isAnchor 相同） */
+  /** 兼容性字段：与 isAnchor 相同，0=普通点, 1=锚点 */
   shapeType: number;
 }
 
 /**
  * 波形小节
+ * 
+ * 小节是波形的基本组成单位，包含频率范围、时长和形状数据。
+ * 一个波形可以包含多个小节，按顺序播放。
  */
 export interface WaveformSection {
   /** 小节索引 */
@@ -118,6 +173,9 @@ export interface WaveformSection {
 
 /**
  * 完整的解析后波形
+ * 
+ * 包含波形的所有信息：元数据、小节、原始数据和转换后的 HEX 波形。
+ * 这是波形解析的最终输出，可以直接用于设备控制。
  */
 export interface ParsedWaveform {
   /** 波形名称 */
@@ -139,9 +197,13 @@ export interface ParsedWaveform {
 // ============================================================================
 
 /**
- * 根据索引获取频率值（0-83）
- * @param index - 频率索引
- * @returns 频率值
+ * 根据索引获取频率值
+ * 
+ * 将 APP 使用的频率索引（0-83）转换为实际频率值（10-1000 Hz）。
+ * 超出范围的索引会被限制在有效范围内。
+ * 
+ * @param index - 频率索引，范围 0-83
+ * @returns 对应的频率值（Hz）
  */
 export function getFrequencyFromIndex(index: number): number {
   const clampedIndex = Math.max(0, Math.min(83, Math.floor(index)));
@@ -149,9 +211,13 @@ export function getFrequencyFromIndex(index: number): number {
 }
 
 /**
- * 根据索引获取时长值（0-99），单位 100ms
- * @param index - 时长索引
- * @returns 时长值
+ * 根据索引获取时长值
+ * 
+ * 将时长索引（0-99）转换为实际时长值。
+ * 返回值单位为 100ms，例如返回 32 表示 3.2 秒。
+ * 
+ * @param index - 时长索引，范围 0-99
+ * @returns 时长值（单位 100ms）
  */
 export function getDurationFromIndex(index: number): number {
   const clampedIndex = Math.max(0, Math.min(99, Math.floor(index)));
@@ -159,11 +225,18 @@ export function getDurationFromIndex(index: number): number {
 }
 
 /**
- * 频率转换函数
- * 将频率值（10-1000）转换为设备输出值（10-240）
- * 基于 V3 协议规范
- * @param x - 输入频率
- * @returns 输出值
+ * 频率值转换为设备输出值
+ * 
+ * 将人类可读的频率值（10-1000 Hz）转换为设备协议使用的输出值（10-240）。
+ * 这个转换基于 V3 协议规范，使用分段线性映射。
+ * 
+ * 转换规则：
+ * - 10-100 Hz: 直接映射（输出 10-100）
+ * - 100-600 Hz: 压缩映射（输出 100-200）
+ * - 600-1000 Hz: 进一步压缩（输出 200-240）
+ * 
+ * @param x - 输入频率（Hz）
+ * @returns 设备输出值（10-240）
  */
 export function getOutputValue(x: number): number {
   let output: number;
@@ -185,9 +258,13 @@ export function getOutputValue(x: number): number {
 }
 
 /**
- * 验证 HEX 波形格式（16 个十六进制字符 = 8 字节）
- * @param hex - HEX 字符串
- * @returns 是否有效
+ * 验证 HEX 波形格式
+ * 
+ * 检查字符串是否为有效的 HEX 波形格式：16 个十六进制字符（8 字节）。
+ * 每个 HEX 波形包含 4 个频率值和 4 个强度值，对应 100ms 的输出。
+ * 
+ * @param hex - 待验证的 HEX 字符串
+ * @returns 是否为有效的 HEX 波形
  */
 export function isValidHexWaveform(hex: string): boolean {
   return /^[0-9a-fA-F]{16}$/.test(hex);
@@ -201,19 +278,34 @@ export function isValidHexWaveform(hex: string): boolean {
 /**
  * 解析 Dungeonlab+pulse: 文本格式的波形数据
  * 
- * 格式: Dungeonlab+pulse:setting=section+section+section...
- * - setting: sectionRestTime,playbackSpeed,frequencyBalance=
- * - section: freqRange1,freqRange2,duration,freqMode,enabled/strength-anchor,...
+ * 这是波形解析的主入口函数。它将 APP 导出的文本格式波形数据
+ * 解析为结构化的 ParsedWaveform 对象，并生成可直接发送到设备的 HEX 波形。
  * 
- * @param data - 波形数据字符串
- * @param name - 波形名称
- * @returns 解析后的波形
- * @throws 当格式无效时抛出错误
+ * 解析流程：
+ * 1. 验证格式前缀
+ * 2. 提取全局设置（休息时长、播放速率、频率平衡）
+ * 3. 解析各小节（频率范围、时长、频率模式、形状数据）
+ * 4. 转换为 HEX 波形数组
+ * 
+ * @param data - 波形数据字符串，必须以 'Dungeonlab+pulse:' 开头
+ * @param name - 波形名称，用于标识和存储
+ * @returns 解析后的完整波形对象
+ * @throws Error 当格式无效或数据不完整时
+ * 
+ * @example
+ * const waveform = parseWaveform(
+ *   "Dungeonlab+pulse:18,1,8=27,7,32,3,1/0-1,50-0,100-1",
+ *   "我的波形"
+ * );
+ * console.log(waveform.hexWaveforms); // 可直接发送到设备
  */
 export function parseWaveform(data: string, name: string): ParsedWaveform {
   // 验证格式
   if (!data.startsWith("Dungeonlab+pulse:")) {
-    throw new Error("无效的波形格式: 必须以 'Dungeonlab+pulse:' 开头");
+    throw new WaveformError("无效的波形格式: 必须以 'Dungeonlab+pulse:' 开头", {
+      code: ErrorCode.WAVEFORM_INVALID_FORMAT,
+      context: { name, prefix: data.substring(0, 20) },
+    });
   }
 
   // 移除前缀
@@ -223,7 +315,10 @@ export function parseWaveform(data: string, name: string): ParsedWaveform {
   const sectionParts = cleanData.split("+section+");
   
   if (sectionParts.length === 0 || !sectionParts[0]) {
-    throw new Error("无效的波形数据: 未找到小节");
+    throw new WaveformError("无效的波形数据: 未找到小节", {
+      code: ErrorCode.WAVEFORM_PARSE_FAILED,
+      context: { name },
+    });
   }
 
   // 解析全局设置和第一个小节
@@ -231,7 +326,10 @@ export function parseWaveform(data: string, name: string): ParsedWaveform {
   const equalIdx = firstPart.indexOf("=");
   
   if (equalIdx === -1) {
-    throw new Error("无效的波形格式: 缺少全局设置的 '=' 分隔符");
+    throw new WaveformError("无效的波形格式: 缺少全局设置的 '=' 分隔符", {
+      code: ErrorCode.WAVEFORM_INVALID_FORMAT,
+      context: { name },
+    });
   }
 
   // 解析全局设置: sectionRestTime,playbackSpeed,frequencyBalance
@@ -263,7 +361,10 @@ export function parseWaveform(data: string, name: string): ParsedWaveform {
     // 按 '/' 分割，分离头部和形状数据
     const slashIdx = sectionData.indexOf("/");
     if (slashIdx === -1) {
-      throw new Error(`无效的小节 ${i + 1}: 缺少 '/' 分隔符`);
+      throw new WaveformError(`无效的小节 ${i + 1}: 缺少 '/' 分隔符`, {
+        code: ErrorCode.WAVEFORM_INVALID_FORMAT,
+        context: { name, sectionIndex: i + 1 },
+      });
     }
 
     const headerPart = sectionData.substring(0, slashIdx);
@@ -303,7 +404,10 @@ export function parseWaveform(data: string, name: string): ParsedWaveform {
 
     // 验证形状数据
     if (shapePoints.length < 2) {
-      throw new Error(`无效的小节 ${i + 1}: 必须至少有 2 个形状点`);
+      throw new WaveformError(`无效的小节 ${i + 1}: 必须至少有 2 个形状点`, {
+        code: ErrorCode.WAVEFORM_INVALID_FORMAT,
+        context: { name, sectionIndex: i + 1, shapePointCount: shapePoints.length },
+      });
     }
 
     // 获取计算值
@@ -328,7 +432,10 @@ export function parseWaveform(data: string, name: string): ParsedWaveform {
   }
 
   if (sections.length === 0) {
-    throw new Error("无效的波形数据: 没有启用的小节");
+    throw new WaveformError("无效的波形数据: 没有启用的小节", {
+      code: ErrorCode.WAVEFORM_PARSE_FAILED,
+      context: { name },
+    });
   }
 
   // 构建兼容性元数据
@@ -490,9 +597,16 @@ function convertToHexWaveforms(sections: WaveformSection[], _playbackSpeed: numb
 }
 
 /**
- * 将波形编码回 Dungeonlab+pulse: 文本格式（用于往返测试）
- * @param waveform - 解析后的波形
- * @returns 编码后的字符串
+ * 将波形编码回 Dungeonlab+pulse: 文本格式
+ * 
+ * 这是 parseWaveform 的逆操作，用于将解析后的波形重新编码为文本格式。
+ * 主要用于往返测试（round-trip testing）验证解析器的正确性。
+ * 
+ * 注意：由于浮点数精度和格式化差异，编码后的字符串可能与原始输入略有不同，
+ * 但解析后应该产生等效的波形数据。
+ * 
+ * @param waveform - 解析后的波形对象
+ * @returns 编码后的 Dungeonlab+pulse: 格式字符串
  */
 export function encodeWaveform(waveform: ParsedWaveform): string {
   const { metadata, sections } = waveform;

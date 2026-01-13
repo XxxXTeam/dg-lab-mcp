@@ -1,19 +1,5 @@
 /**
  * Debug script to analyze waveform generation
- * 
- * 核心概念：
- * - 每个形状点 = 100ms 的输出强度（4 个 25ms 采样）
- * - 脉冲元 = 所有形状点组成的一个完整波形周期
- * - 小节 = 脉冲元循环重复播放，直到小节时长结束
- * - 脉冲元会完整播放，即使超过设定的小节时长
- * 
- * 频率模式：
- * - 模式 1：固定频率
- * - 模式 2：整个小节内频率渐变
- * - 模式 3：每个脉冲元内频率渐变，然后重置
- * - 模式 4：脉冲元内频率固定，脉冲元之间渐变
- * 
- * 锚点：仅用于 APP 编辑器 UI，不影响波形播放
  */
 
 import { parseWaveform, getOutputValue, getFrequencyFromIndex } from "./src/waveform-parser";
@@ -25,73 +11,92 @@ console.log("=== 波形解析测试 ===\n");
 
 const parsed = parseWaveform(correctWaveform, "correct-wave");
 
-// 分析每个小节
-for (let i = 0; i < parsed.sections.length; i++) {
-  const section = parsed.sections[i]!;
-  console.log(`\n=== 小节 ${i + 1} ===`);
-  console.log(`  形状点数量: ${section.shape.length}`);
-  console.log(`  小节设定时长: ${section.duration} x 100ms = ${section.duration / 10}s`);
-  console.log(`  脉冲元时长: ${section.shape.length} x 100ms = ${section.shape.length / 10}s`);
+// 分析小节 1
+const section1 = parsed.sections[0]!;
+console.log("=== 小节 1 详细分析 ===");
+console.log(`形状点数量: ${section1.shape.length}`);
+console.log(`小节设定时长: ${section1.duration} x 100ms`);
+console.log(`脉冲元时长: ${section1.shape.length} x 100ms`);
+
+const pulseElementCount = Math.ceil(section1.duration / section1.shape.length);
+console.log(`脉冲元循环次数: ${pulseElementCount}`);
+console.log("");
+
+// 检查脉冲元之间的过渡
+console.log("=== 检查脉冲元之间的过渡 ===");
+console.log("（查看每个脉冲元的最后一个包和下一个脉冲元的第一个包）\n");
+
+for (let elem = 0; elem < pulseElementCount; elem++) {
+  const startIdx = elem * section1.shape.length;
+  const endIdx = startIdx + section1.shape.length - 1;
   
-  const pulseElementCount = Math.ceil(section.duration / section.shape.length);
-  const actualDuration = pulseElementCount * section.shape.length;
-  console.log(`  脉冲元循环次数: ${pulseElementCount}`);
-  console.log(`  实际播放时长: ${actualDuration} x 100ms = ${actualDuration / 10}s`);
+  const lastHex = parsed.hexWaveforms[endIdx];
+  const nextHex = parsed.hexWaveforms[endIdx + 1];
   
-  const freqModeNames = ['', '固定', '节内渐变', '元内渐变', '元间渐变'];
-  console.log(`  频率模式: ${section.frequencyMode} (${freqModeNames[section.frequencyMode]})`);
-  console.log(`  起始频率: ${section.startFrequency} Hz -> 输出值: ${getOutputValue(section.startFrequency)}`);
-  console.log(`  结束频率: ${section.endFrequency} Hz -> 输出值: ${getOutputValue(section.endFrequency)}`);
+  if (lastHex) {
+    const lastStrengths = [
+      parseInt(lastHex.substring(8, 10), 16),
+      parseInt(lastHex.substring(10, 12), 16),
+      parseInt(lastHex.substring(12, 14), 16),
+      parseInt(lastHex.substring(14, 16), 16),
+    ];
+    console.log(`脉冲元 ${elem + 1} 最后一个包 (${endIdx + 1}): 强度=[${lastStrengths.join(',')}]`);
+  }
   
-  console.log(`\n  形状点强度值:`);
-  section.shape.forEach((p, idx) => {
-    console.log(`    点 ${idx + 1}: 强度=${p.strength.toFixed(2)}, 锚点=${p.isAnchor ? '是' : '否'}`);
-  });
+  if (nextHex && elem < pulseElementCount - 1) {
+    const nextStrengths = [
+      parseInt(nextHex.substring(8, 10), 16),
+      parseInt(nextHex.substring(10, 12), 16),
+      parseInt(nextHex.substring(12, 14), 16),
+      parseInt(nextHex.substring(14, 16), 16),
+    ];
+    console.log(`脉冲元 ${elem + 2} 第一个包 (${endIdx + 2}): 强度=[${nextStrengths.join(',')}]`);
+    console.log("");
+  }
 }
 
-console.log("\n\n=== 生成的 HEX 波形 ===");
-console.log(`总共 ${parsed.hexWaveforms.length} 个 HEX 包（每个 100ms）\n`);
-
-// 显示前几个 HEX 包
-const showCount = Math.min(20, parsed.hexWaveforms.length);
-for (let i = 0; i < showCount; i++) {
+// 检查是否有强度为 0 的包
+console.log("\n=== 检查是否有强度为 0 的包 ===");
+let zeroCount = 0;
+for (let i = 0; i < parsed.hexWaveforms.length; i++) {
   const hex = parsed.hexWaveforms[i]!;
-  const freqs = [
-    parseInt(hex.substring(0, 2), 16),
-    parseInt(hex.substring(2, 4), 16),
-    parseInt(hex.substring(4, 6), 16),
-    parseInt(hex.substring(6, 8), 16),
-  ];
   const strengths = [
     parseInt(hex.substring(8, 10), 16),
     parseInt(hex.substring(10, 12), 16),
     parseInt(hex.substring(12, 14), 16),
     parseInt(hex.substring(14, 16), 16),
   ];
-  console.log(`  ${i + 1}. HEX: ${hex}`);
-  console.log(`     频率: [${freqs.join(', ')}], 强度: [${strengths.join(', ')}]`);
+  
+  if (strengths.every(s => s === 0)) {
+    console.log(`  包 ${i + 1}: 全部强度为 0`);
+    zeroCount++;
+  }
 }
 
-if (parsed.hexWaveforms.length > showCount) {
-  console.log(`  ... 还有 ${parsed.hexWaveforms.length - showCount} 个包`);
+if (zeroCount === 0) {
+  console.log("  没有发现全部强度为 0 的包");
 }
 
-// 验证小节 1 的第一个脉冲元
-console.log("\n\n=== 验证小节 1 第一个脉冲元 ===");
-const section1 = parsed.sections[0]!;
-console.log("预期：每个形状点生成一个 HEX 包，强度值相同（4 个 25ms 采样）");
-console.log("");
-
-for (let shapeIdx = 0; shapeIdx < section1.shape.length; shapeIdx++) {
-  const expectedStrength = Math.round(section1.shape[shapeIdx]!.strength);
-  const hex = parsed.hexWaveforms[shapeIdx]!;
-  const actualStrengths = [
+// 输出完整的 HEX 数组（用于对比）
+console.log("\n\n=== 完整 HEX 数组（小节 1 的前 40 个包）===");
+const section1HexCount = pulseElementCount * section1.shape.length;
+for (let i = 0; i < Math.min(40, section1HexCount); i++) {
+  const hex = parsed.hexWaveforms[i]!;
+  const strengths = [
     parseInt(hex.substring(8, 10), 16),
     parseInt(hex.substring(10, 12), 16),
     parseInt(hex.substring(12, 14), 16),
     parseInt(hex.substring(14, 16), 16),
   ];
+  const freqs = [
+    parseInt(hex.substring(0, 2), 16),
+    parseInt(hex.substring(2, 4), 16),
+    parseInt(hex.substring(4, 6), 16),
+    parseInt(hex.substring(6, 8), 16),
+  ];
   
-  const match = actualStrengths.every(s => s === expectedStrength);
-  console.log(`  形状点 ${shapeIdx + 1}: 预期强度=${expectedStrength}, 实际=[${actualStrengths.join(',')}] ${match ? '✓' : '✗'}`);
+  const elemIdx = Math.floor(i / section1.shape.length);
+  const shapeIdx = i % section1.shape.length;
+  
+  console.log(`  ${(i + 1).toString().padStart(2)}: 脉冲元${elemIdx + 1}-形状点${shapeIdx + 1} | 强度=[${strengths.map(s => s.toString().padStart(3)).join(',')}] | 频率=[${freqs.map(f => f.toString().padStart(3)).join(',')}]`);
 }

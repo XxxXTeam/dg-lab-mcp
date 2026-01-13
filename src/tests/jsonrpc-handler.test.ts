@@ -22,11 +22,11 @@ describe("JSON-RPC Handler", () => {
 
       // Generate strings that are not valid JSON
       const invalidJsonArb = fc.oneof(
-        // Truncated JSON
-        fc.string().map((s) => `{"jsonrpc": "2.0", "method": "${s}`),
+        // Truncated JSON - ensure it's actually truncated by not closing the string
+        fc.string({ minLength: 1 }).map((s) => `{"jsonrpc": "2.0", "method": "${s}`),
         // Missing quotes
         fc.string({ minLength: 1 }).map((s) => `{jsonrpc: "2.0", method: ${s}}`),
-        // Random non-JSON strings
+        // Random non-JSON strings (filtered to ensure they're invalid)
         fc.string().filter((s) => {
           try {
             JSON.parse(s);
@@ -39,6 +39,8 @@ describe("JSON-RPC Handler", () => {
         fc.constant("{"),
         fc.constant("["),
         fc.constant('{"jsonrpc"'),
+        // Unterminated string
+        fc.constant('{"jsonrpc": "2.0", "method": "test'),
       );
 
       await fc.assert(

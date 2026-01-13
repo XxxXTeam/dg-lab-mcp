@@ -1,37 +1,38 @@
 /**
- * @fileoverview 设备管理工具
- * @description 实现 dg_connect, dg_list_devices, dg_set_alias, dg_find_device, dg_disconnect
+ * @fileoverview 设备管理工具集
+ * 
+ * 提供 DG-LAB 设备的连接、查询、别名管理和断开等核心功能。
+ * 这些工具是 AI 与 DG-LAB 设备交互的主要入口，负责：
+ * - 创建新的设备连接并生成二维码供 APP 扫描
+ * - 查询和管理已连接的设备列表
+ * - 为设备设置别名以便识别和管理
+ * - 断开并清理设备连接
+ * 
+ * 典型使用流程：
+ * 1. 调用 dg_connect 创建连接，获取二维码
+ * 2. 用户使用 DG-LAB APP 扫描二维码
+ * 3. 通过 dg_list_devices 确认设备已绑定
+ * 4. 使用 control-tools 中的工具控制设备
  */
 
 import type { ToolManager } from "../tool-manager";
 import { createToolResult, createToolError } from "../tool-manager";
 import type { SessionManager } from "../session-manager";
 import type { DGLabWSServer } from "../ws-server";
-import * as os from "os";
+import { getEffectiveIP, getLocalIP } from "../config";
+import { ConnectionError, ToolError, ErrorCode } from "../errors";
 
 /**
- * 获取本地 IP 地址（用于生成二维码）
- * @returns 本地 IP 地址
- */
-function getLocalIP(): string {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name] || []) {
-      // 跳过内部和非 IPv4 地址
-      if (iface.family === "IPv4" && !iface.internal) {
-        return iface.address;
-      }
-    }
-  }
-  return "localhost";
-}
-
-/**
- * 注册设备管理工具
- * @param toolManager - 工具管理器
- * @param sessionManager - 会话管理器
- * @param wsServer - WebSocket 服务器
- * @param publicIp - 公网IP（可选，用于生成二维码）
+ * 注册所有设备管理相关的 MCP 工具
+ * 
+ * 将设备管理工具注册到工具管理器中，使 AI 能够通过 MCP 协议
+ * 调用这些工具来管理 DG-LAB 设备连接。
+ * 
+ * @param toolManager - 工具管理器实例，用于注册工具
+ * @param sessionManager - 会话管理器，维护设备会话状态
+ * @param wsServer - WebSocket 服务器，处理与 APP 的实时通信
+ * @param publicIp - 公网 IP 地址，用于生成可从外网访问的二维码 URL。
+ *                   如果未提供，将自动检测本地 IP
  */
 export function registerDeviceTools(
   toolManager: ToolManager,
@@ -39,10 +40,18 @@ export function registerDeviceTools(
   wsServer: DGLabWSServer,
   publicIp?: string
 ): void {
-  // 优先使用公网IP，否则使用本地IP
-  const ipAddress = publicIp || getLocalIP();
+  // 确定用于二维码的 IP 地址
+  // 优先使用显式配置的公网 IP，否则回退到自动检测的本地 IP
+  const localIp = getLocalIP();
+  const ipAddress = publicIp || localIp;
+  
+  // 记录 IP 配置，便于调试连接问题
+  console.log(`[设备工具] PUBLIC_IP 配置: "${publicIp || '(未设置)'}"`);
+  console.log(`[设备工具] 本地 IP: ${localIp}`);
+  console.log(`[设备工具] 使用 IP: ${ipAddress}`);
 
-  // dg_connect - 创建新的设备连接
+  // ========== dg_connect ==========
+  // 创建新的设备连接，这是使用 DG-LAB 的第一步
   toolManager.registerTool(
     "dg_connect",
     `【第一步】创建DG-LAB设备连接。返回deviceId（后续操作必需）和qrCodeUrl（二维码链接）。
@@ -55,19 +64,20 @@ export function registerDeviceTools(
     },
     async () => {
       try {
-        // 在会话管理器中创建新会话
+        // 创建会话：在会话管理器中分配一个新的 deviceId
         const session = sessionManager.createSession();
 
-        // 在 WebSocket 服务器中创建控制器
+        // 创建控制器：在 WebSocket 服务器中注册，获取 clientId
+        // clientId 用于 APP 扫码后建立连接
         const clientId = wsServer.createController();
 
-        // 更新会话的 clientId
+        // 关联会话和控制器
         sessionManager.updateConnectionState(session.deviceId, {
           clientId,
           connected: true,
         });
 
-        // 生成二维码 URL
+        // 生成二维码 URL，APP 扫描后会连接到这个地址
         const qrCodeUrl = wsServer.getQRCodeUrl(clientId, ipAddress);
 
         return createToolResult(
@@ -78,13 +88,17 @@ export function registerDeviceTools(
           })
         );
       } catch (err) {
-        const message = err instanceof Error ? err.message : "连接失败";
-        return createToolError(`连接失败: ${message}`);
+        const error = err instanceof ConnectionError ? err : new ConnectionError(
+          err instanceof Error ? err.message : "连接失败",
+          { code: ErrorCode.CONN_DEVICE_NOT_FOUND, cause: err instanceof Error ? err : undefined }
+        );
+        return createToolError(`连接失败: ${error.message}`);
       }
     }
   );
 
-  // dg_list_devices - 列出所有设备
+  // ========== dg_list_devices ==========
+  // 列出所有设备及其状态，用于查看当前连接情况
   toolManager.registerTool(
     "dg_list_devices",
     `列出所有已创建的设备连接及其状态。
@@ -109,14 +123,16 @@ export function registerDeviceTools(
     async (params) => {
       let sessions = sessionManager.listSessions();
 
-      // 如果提供了别名则过滤
+      // 支持按别名过滤，方便在多设备场景下快速定位
       const alias = params.alias as string | undefined;
       if (alias) {
         sessions = sessionManager.findByAlias(alias);
       }
 
+      // 构建设备状态列表，合并会话信息和 WebSocket 绑定状态
       const devices = sessions.map((s) => {
-        // 检查控制器是否在 WS 服务器中已绑定
+        // boundToApp 表示 APP 是否已扫码并建立连接
+        // 只有 boundToApp 为 true 时才能控制设备
         const isBound = s.clientId ? wsServer.isControllerBound(s.clientId) : false;
         
         return {
@@ -135,7 +151,8 @@ export function registerDeviceTools(
     }
   );
 
-  // dg_set_alias - 设置设备别名
+  // ========== dg_set_alias ==========
+  // 为设备设置别名，便于识别和管理多个设备
   toolManager.registerTool(
     "dg_set_alias",
     `为设备设置自定义别名，方便后续通过别名查找和管理设备。
@@ -159,6 +176,7 @@ export function registerDeviceTools(
       const deviceId = params.deviceId as string;
       const alias = params.alias as string;
 
+      // 参数校验
       if (!deviceId) {
         return createToolError("缺少必需参数: deviceId");
       }
@@ -166,6 +184,7 @@ export function registerDeviceTools(
         return createToolError("缺少必需参数: alias");
       }
 
+      // 尝试设置别名，如果设备不存在会返回 false
       const success = sessionManager.setAlias(deviceId, alias);
       if (!success) {
         return createToolError(`设备不存在: ${deviceId}`);
@@ -181,7 +200,8 @@ export function registerDeviceTools(
     }
   );
 
-  // dg_find_device - 按别名查找设备
+  // ========== dg_find_device ==========
+  // 通过别名查找设备，支持模糊匹配
   toolManager.registerTool(
     "dg_find_device",
     `通过别名查找设备（大小写不敏感，支持模糊匹配）。
@@ -205,7 +225,10 @@ export function registerDeviceTools(
         return createToolError("缺少必需参数: alias");
       }
 
+      // 查找所有匹配的设备（支持模糊匹配）
       const sessions = sessionManager.findByAlias(alias);
+      
+      // 构建设备状态列表，与 dg_list_devices 格式一致
       const devices = sessions.map((s) => {
         const isBound = s.clientId ? wsServer.isControllerBound(s.clientId) : false;
         
@@ -230,7 +253,8 @@ export function registerDeviceTools(
     }
   );
 
-  // dg_disconnect - 断开并删除设备连接
+  // ========== dg_disconnect ==========
+  // 断开设备连接并清理资源
   toolManager.registerTool(
     "dg_disconnect",
     `断开并删除设备连接，释放资源。
@@ -255,27 +279,28 @@ export function registerDeviceTools(
       const deviceId = params.deviceId as string | undefined;
       const alias = params.alias as string | undefined;
 
-      // 必须提供 deviceId 或 alias 之一
+      // 参数校验：必须提供 deviceId 或 alias 之一
       if (!deviceId && !alias) {
         return createToolError("必须提供 deviceId 或 alias 参数之一");
       }
 
-      // 如果提供了两个参数，优先使用 deviceId
+      // 不允许同时提供两个参数，避免歧义
       if (deviceId && alias) {
         return createToolError("只能提供 deviceId 或 alias 参数之一，不能同时提供");
       }
 
+      // 收集要删除的设备 ID 列表
       let sessionsToDelete: string[] = [];
 
       if (deviceId) {
-        // 通过 deviceId 查找
+        // 通过 deviceId 精确查找
         const session = sessionManager.getSession(deviceId);
         if (!session) {
           return createToolError(`设备不存在: ${deviceId}`);
         }
         sessionsToDelete.push(deviceId);
       } else if (alias) {
-        // 通过 alias 查找
+        // 通过 alias 模糊查找，可能匹配多个设备
         const sessions = sessionManager.findByAlias(alias);
         if (sessions.length === 0) {
           return createToolError(`未找到别名为 "${alias}" 的设备`);
@@ -283,12 +308,12 @@ export function registerDeviceTools(
         sessionsToDelete = sessions.map(s => s.deviceId);
       }
 
-      // 删除所有匹配的会话
+      // 逐个删除匹配的设备
       const deletedDevices: Array<{ deviceId: string; alias: string | null }> = [];
       for (const id of sessionsToDelete) {
         const session = sessionManager.getSession(id);
         if (session) {
-          // 先断开 WebSocket 连接
+          // 先断开 WebSocket 连接，确保 APP 端收到断开通知
           if (session.clientId) {
             wsServer.disconnectController(session.clientId);
           }
@@ -298,7 +323,7 @@ export function registerDeviceTools(
             alias: session.alias,
           });
           
-          // 然后删除 session
+          // 最后删除会话记录
           sessionManager.deleteSession(id);
         }
       }

@@ -1,6 +1,19 @@
 /**
- * @fileoverview 设备控制工具
- * @description 实现 dg_set_strength, dg_send_waveform, dg_clear_waveform, dg_get_status
+ * @fileoverview 设备控制工具集
+ * 
+ * 提供 DG-LAB 设备的核心控制功能，包括强度调节、波形发送和状态查询。
+ * 这些工具需要在设备完成绑定（boundToApp 为 true）后才能使用。
+ * 
+ * 主要功能：
+ * - dg_set_strength: 调节通道输出强度
+ * - dg_send_waveform: 发送波形数据控制输出模式
+ * - dg_clear_waveform: 清空波形队列停止输出
+ * - dg_get_status: 查询设备完整状态
+ * 
+ * 使用前提：
+ * 1. 已通过 dg_connect 创建连接
+ * 2. 用户已用 APP 扫码完成绑定
+ * 3. 通过 dg_get_status 确认 boundToApp 为 true
  */
 
 import type { ToolManager } from "../tool-manager";
@@ -8,15 +21,32 @@ import { createToolResult, createToolError } from "../tool-manager";
 import type { SessionManager } from "../session-manager";
 import type { DGLabWSServer } from "../ws-server";
 import { getWaveformStorage } from "./waveform-tools";
+import { ToolError, ConnectionError, ErrorCode } from "../errors";
 
-/** 强度模式类型 */
+/** 
+ * 强度调节模式
+ * - increase: 在当前值基础上增加
+ * - decrease: 在当前值基础上减少
+ * - set: 直接设置为指定值
+ */
 type StrengthMode = "increase" | "decrease" | "set";
 
+// ============================================================
+// 参数验证函数
+// 这些函数提供统一的参数校验逻辑，返回类型安全的结果
+// ============================================================
+
 /**
- * 验证设备 ID
- * @param sessionManager - 会话管理器
- * @param deviceId - 设备 ID
- * @returns 错误信息或会话对象
+ * 验证设备 ID 并获取对应的会话
+ * 
+ * @param sessionManager - 会话管理器实例
+ * @param deviceId - 待验证的设备 ID
+ * @returns 包含错误信息的对象，或包含会话对象的对象
+ * 
+ * @example
+ * const result = validateDeviceId(sessionManager, params.deviceId);
+ * if ("error" in result) return createToolError(result.error);
+ * const session = result.session;
  */
 function validateDeviceId(
   sessionManager: SessionManager,
@@ -35,9 +65,13 @@ function validateDeviceId(
 }
 
 /**
- * 验证通道
- * @param channel - 通道
- * @returns 错误信息或通道值
+ * 验证通道参数
+ * 
+ * DG-LAB 设备有两个独立的输出通道 A 和 B，
+ * 每个通道可以独立控制强度和波形。
+ * 
+ * @param channel - 待验证的通道值
+ * @returns 包含错误信息的对象，或包含规范化通道值的对象
  */
 function validateChannel(channel: string | undefined): { error: string } | { channel: "A" | "B" } {
   if (!channel) {
@@ -51,8 +85,12 @@ function validateChannel(channel: string | undefined): { error: string } | { cha
 
 /**
  * 验证强度值
- * @param value - 强度值
- * @returns 错误信息或强度值
+ * 
+ * 强度值范围为 0-200，但实际可用范围受 APP 设置的上限限制。
+ * 超过上限的值会被设备自动截断。
+ * 
+ * @param value - 待验证的强度值
+ * @returns 包含错误信息的对象，或包含数值类型强度值的对象
  */
 function validateStrengthValue(value: unknown): { error: string } | { value: number } {
   if (value === undefined || value === null) {
@@ -66,9 +104,10 @@ function validateStrengthValue(value: unknown): { error: string } | { value: num
 }
 
 /**
- * 验证强度模式
- * @param mode - 模式
- * @returns 错误信息或模式值
+ * 验证强度调节模式
+ * 
+ * @param mode - 待验证的模式值
+ * @returns 包含错误信息的对象，或包含类型安全模式值的对象
  */
 function validateStrengthMode(mode: string | undefined): { error: string } | { mode: StrengthMode } {
   if (!mode) {
@@ -81,9 +120,13 @@ function validateStrengthMode(mode: string | undefined): { error: string } | { m
 }
 
 /**
- * 验证波形数组
- * @param waveforms - 波形数组
- * @returns 错误信息或波形数组
+ * 验证波形数据数组
+ * 
+ * 波形数据是 DG-LAB 协议的核心，每个波形由 8 字节（16 个十六进制字符）组成，
+ * 包含频率、脉宽、强度等参数。详细格式参见 waveform-parser.ts。
+ * 
+ * @param waveforms - 待验证的波形数组
+ * @returns 包含错误信息的对象，或包含验证通过的波形数组的对象
  */
 function validateWaveforms(waveforms: unknown): { error: string } | { waveforms: string[] } {
   if (!waveforms) {
@@ -95,6 +138,7 @@ function validateWaveforms(waveforms: unknown): { error: string } | { waveforms:
   if (waveforms.length === 0) {
     return { error: "waveforms 数组不能为空" };
   }
+  // 限制单次发送的波形数量，避免内存问题
   if (waveforms.length > 100) {
     return { error: `waveforms 数组长度超过限制: ${waveforms.length}，最大 100` };
   }
@@ -111,18 +155,27 @@ function validateWaveforms(waveforms: unknown): { error: string } | { waveforms:
   return { waveforms: waveforms as string[] };
 }
 
+// ============================================================
+// 工具注册
+// ============================================================
+
 /**
- * 注册设备控制工具
- * @param toolManager - 工具管理器
- * @param sessionManager - 会话管理器
- * @param wsServer - WebSocket 服务器
+ * 注册所有设备控制相关的 MCP 工具
+ * 
+ * 将控制工具注册到工具管理器中，使 AI 能够通过 MCP 协议
+ * 控制已绑定的 DG-LAB 设备。
+ * 
+ * @param toolManager - 工具管理器实例，用于注册工具
+ * @param sessionManager - 会话管理器，维护设备会话状态
+ * @param wsServer - WebSocket 服务器，处理与 APP 的实时通信
  */
 export function registerControlTools(
   toolManager: ToolManager,
   sessionManager: SessionManager,
   wsServer: DGLabWSServer
 ): void {
-  // dg_set_strength - 设置通道强度
+  // ========== dg_set_strength ==========
+  // 调节通道输出强度，支持增加、减少和直接设置三种模式
   toolManager.registerTool(
     "dg_set_strength",
     `设置设备通道强度。必须在boundToApp为true后才能使用。
@@ -142,47 +195,44 @@ export function registerControlTools(
       required: ["deviceId", "channel", "mode", "value"],
     },
     async (params) => {
-      // 验证 deviceId
+      // 参数验证链：依次验证各个参数
       const deviceResult = validateDeviceId(sessionManager, params.deviceId as string);
       if ("error" in deviceResult) return createToolError(deviceResult.error);
       const session = deviceResult.session!;
 
-      // 验证 channel
       const channelResult = validateChannel(params.channel as string);
       if ("error" in channelResult) return createToolError(channelResult.error);
       const channel = channelResult.channel;
 
-      // 验证 mode
       const modeResult = validateStrengthMode(params.mode as string);
       if ("error" in modeResult) return createToolError(modeResult.error);
       const mode = modeResult.mode;
 
-      // 验证 value
       const valueResult = validateStrengthValue(params.value);
       if ("error" in valueResult) return createToolError(valueResult.error);
       const value = valueResult.value;
 
-      // 检查连接 - 需要 clientId 来发送命令
+      // 连接状态检查：必须有 clientId 才能发送命令
       if (!session.clientId) {
         return createToolError("设备未连接");
       }
 
-      // 检查是否已绑定 APP
+      // 绑定状态检查：APP 必须已扫码绑定
       const isBound = wsServer.isControllerBound(session.clientId);
       if (!isBound) {
         return createToolError("设备未绑定APP");
       }
 
-      // 通过 WS 服务器发送命令
+      // 发送强度命令到设备
       const success = wsServer.sendStrength(session.clientId, channel, mode, value);
       if (!success) {
         return createToolError("发送强度命令失败");
       }
 
-      // 触摸会话
+      // 更新会话活跃时间，防止被清理
       sessionManager.touchSession(session.deviceId);
 
-      // 获取更新后的会话用于响应
+      // 返回更新后的强度值
       const updated = sessionManager.getSession(session.deviceId);
       const newStrength = channel === "A" ? updated?.strengthA : updated?.strengthB;
 
@@ -197,7 +247,8 @@ export function registerControlTools(
     }
   );
 
-  // dg_send_waveform - 发送波形数据
+  // ========== dg_send_waveform ==========
+  // 发送波形数据控制输出模式，支持直接提供数据或引用已保存的波形
   toolManager.registerTool(
     "dg_send_waveform",
     `发送波形数据到设备，控制输出模式。必须在boundToApp为true后才能使用。
@@ -225,21 +276,20 @@ export function registerControlTools(
       required: ["deviceId", "channel"],
     },
     async (params) => {
-      // 验证 deviceId
+      // 参数验证
       const deviceResult = validateDeviceId(sessionManager, params.deviceId as string);
       if ("error" in deviceResult) return createToolError(deviceResult.error);
       const session = deviceResult.session!;
 
-      // 验证 channel
       const channelResult = validateChannel(params.channel as string);
       if ("error" in channelResult) return createToolError(channelResult.error);
       const channel = channelResult.channel;
 
-      // 获取波形数据
+      // 获取波形数据来源
       const rawWaveforms = params.waveforms as string[] | undefined;
       const waveformName = params.waveformName as string | undefined;
 
-      // 验证参数：必须提供 waveforms 或 waveformName 之一
+      // 必须提供波形数据来源之一
       if (!rawWaveforms && !waveformName) {
         return createToolError("必须提供 waveforms 或 waveformName 参数之一");
       }
@@ -247,12 +297,12 @@ export function registerControlTools(
       let waveforms: string[];
 
       if (rawWaveforms) {
-        // 使用直接提供的波形数据
+        // 方式一：直接提供波形数据
         const waveformsResult = validateWaveforms(rawWaveforms);
         if ("error" in waveformsResult) return createToolError(waveformsResult.error);
         waveforms = waveformsResult.waveforms;
       } else {
-        // 从存储中获取波形
+        // 方式二：从存储中获取已保存的波形
         const storage = getWaveformStorage();
         const storedWaveform = storage.get(waveformName!);
         
@@ -263,24 +313,22 @@ export function registerControlTools(
         waveforms = storedWaveform.hexWaveforms;
       }
 
-      // 检查连接
+      // 连接和绑定状态检查
       if (!session.clientId) {
         return createToolError("设备未连接");
       }
 
-      // 检查是否已绑定 APP
       const isBound = wsServer.isControllerBound(session.clientId);
       if (!isBound) {
         return createToolError("设备未绑定APP");
       }
 
-      // 通过 WS 服务器发送波形
+      // 发送波形数据到设备
       const success = wsServer.sendWaveform(session.clientId, channel, waveforms);
       if (!success) {
         return createToolError("发送波形数据失败");
       }
 
-      // 触摸会话
       sessionManager.touchSession(session.deviceId);
 
       return createToolResult(
@@ -295,7 +343,8 @@ export function registerControlTools(
     }
   );
 
-  // dg_clear_waveform - 清空波形队列
+  // ========== dg_clear_waveform ==========
+  // 清空波形队列，立即停止当前播放
   toolManager.registerTool(
     "dg_clear_waveform",
     `清空设备指定通道的波形队列，立即停止当前波形播放。
@@ -309,34 +358,31 @@ export function registerControlTools(
       required: ["deviceId", "channel"],
     },
     async (params) => {
-      // 验证 deviceId
+      // 参数验证
       const deviceResult = validateDeviceId(sessionManager, params.deviceId as string);
       if ("error" in deviceResult) return createToolError(deviceResult.error);
       const session = deviceResult.session!;
 
-      // 验证 channel
       const channelResult = validateChannel(params.channel as string);
       if ("error" in channelResult) return createToolError(channelResult.error);
       const channel = channelResult.channel;
 
-      // 检查连接
+      // 连接和绑定状态检查
       if (!session.clientId) {
         return createToolError("设备未连接");
       }
 
-      // 检查是否已绑定 APP
       const isBound = wsServer.isControllerBound(session.clientId);
       if (!isBound) {
         return createToolError("设备未绑定APP");
       }
 
-      // 通过 WS 服务器清空波形
+      // 发送清空命令
       const success = wsServer.clearWaveform(session.clientId, channel);
       if (!success) {
         return createToolError("清空波形队列失败");
       }
 
-      // 触摸会话
       sessionManager.touchSession(session.deviceId);
 
       return createToolResult(
@@ -349,7 +395,8 @@ export function registerControlTools(
     }
   );
 
-  // dg_get_status - 获取设备状态
+  // ========== dg_get_status ==========
+  // 获取设备完整状态，用于检查绑定状态和当前参数
   toolManager.registerTool(
     "dg_get_status",
     `获取设备完整状态信息。
@@ -366,14 +413,15 @@ export function registerControlTools(
       required: ["deviceId"],
     },
     async (params) => {
-      // 验证 deviceId
+      // 参数验证
       const deviceResult = validateDeviceId(sessionManager, params.deviceId as string);
       if ("error" in deviceResult) return createToolError(deviceResult.error);
       const session = deviceResult.session!;
 
-      // 通过 WS 服务器检查是否已绑定 APP
+      // 检查 APP 绑定状态
       const isBound = session.clientId ? wsServer.isControllerBound(session.clientId) : false;
 
+      // 返回完整的设备状态信息
       return createToolResult(
         JSON.stringify({
           deviceId: session.deviceId,
@@ -390,7 +438,10 @@ export function registerControlTools(
   );
 }
 
+// ============================================================
 // 导出验证函数供测试使用
+// ============================================================
+
 export {
   validateDeviceId,
   validateChannel,

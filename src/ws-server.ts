@@ -561,24 +561,5 @@ export class DGLabWSServer {
   getRelationCount(): number { return this.relations.size; }
 }
 
-/**
- * 映射 DG-LAB 错误码到消息
- * @param code - 错误码
- * @returns 错误消息
- */
-export function mapDGLabErrorCode(code: number): string {
-  const errors: Record<number, string> = {
-    200: "成功",
-    209: "对方已断开连接",
-    210: "二维码中没有有效的clientID",
-    211: "服务器未下发APP ID",
-    400: "此ID已被其他客户端绑定",
-    401: "目标客户端不存在",
-    402: "双方未建立绑定关系",
-    403: "消息不是有效的JSON",
-    404: "收信人离线",
-    405: "消息长度超过1950字符",
-    500: "服务器内部错误",
-  };
-  return errors[code] ?? `未知错误: ${code}`;
-}
+// mapDGLabErrorCode 已移至 ws-bridge.ts，从那里导入使用
+export { mapDGLabErrorCode } from "./ws-bridge";
