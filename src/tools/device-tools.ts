@@ -42,7 +42,9 @@ export function registerDeviceTools(
   // dg_connect - 创建新的设备连接
   toolManager.registerTool(
     "dg_connect",
-    "建立与DG-LAB设备的连接，返回deviceId和二维码URL供APP扫描绑定",
+    `【第一步】创建DG-LAB设备连接。返回deviceId（后续操作必需）和qrCodeUrl（二维码链接）。
+使用流程：1.调用此工具获取二维码 → 2.用户用DG-LAB APP扫码 → 3.用dg_get_status检查boundToApp是否为true → 4.boundToApp为true后才能控制设备。
+注意：每次调用会创建新连接，建议先用dg_list_devices检查是否已有可用连接。`,
     {
       type: "object",
       properties: {},
@@ -82,13 +84,21 @@ export function registerDeviceTools(
   // dg_list_devices - 列出所有设备
   toolManager.registerTool(
     "dg_list_devices",
-    "列出所有已连接的设备及其状态",
+    `列出所有已创建的设备连接及其状态。
+返回字段说明：
+- deviceId: 设备唯一标识，用于后续所有操作
+- alias: 设备别名（可选，用于方便识别）
+- connected: 会话是否已建立
+- boundToApp: APP是否已扫码绑定（必须为true才能控制设备）
+- strengthA/B: 当前A/B通道强度(0-200)
+- strengthLimitA/B: A/B通道强度上限（由APP设置）
+可选参数alias用于按别名过滤设备。`,
     {
       type: "object",
       properties: {
         alias: {
           type: "string",
-          description: "可选，按别名过滤设备",
+          description: "可选，按别名过滤设备（大小写不敏感）",
         },
       },
       required: [],
@@ -125,17 +135,19 @@ export function registerDeviceTools(
   // dg_set_alias - 设置设备别名
   toolManager.registerTool(
     "dg_set_alias",
-    "为设备设置自定义别名，方便后续查找",
+    `为设备设置自定义别名，方便后续通过别名查找和管理设备。
+别名可以是用户名、昵称或任何便于识别的名称。
+设置后可通过dg_find_device按别名查找，或在dg_disconnect中使用别名断开连接。`,
     {
       type: "object",
       properties: {
         deviceId: {
           type: "string",
-          description: "设备ID",
+          description: "设备ID（从dg_connect或dg_list_devices获取）",
         },
         alias: {
           type: "string",
-          description: "自定义别名（如用户名、昵称等）",
+          description: "自定义别名（如用户名、昵称等，支持中文）",
         },
       },
       required: ["deviceId", "alias"],
@@ -169,7 +181,10 @@ export function registerDeviceTools(
   // dg_find_device - 按别名查找设备
   toolManager.registerTool(
     "dg_find_device",
-    "通过别名查找设备（大小写不敏感）",
+    `通过别名查找设备（大小写不敏感，支持模糊匹配）。
+返回所有匹配的设备列表，包含完整状态信息。
+适用场景：当知道用户别名但不记得deviceId时使用。
+返回字段与dg_list_devices相同。`,
     {
       type: "object",
       properties: {
@@ -215,7 +230,10 @@ export function registerDeviceTools(
   // dg_disconnect - 断开并删除设备连接
   toolManager.registerTool(
     "dg_disconnect",
-    "断开并删除设备连接，可以通过deviceId或alias指定设备",
+    `断开并删除设备连接，释放资源。
+可通过deviceId精确删除单个设备，或通过alias删除所有匹配的设备。
+注意：deviceId和alias只能二选一，不能同时提供。
+删除后设备需要重新调用dg_connect创建新连接。`,
     {
       type: "object",
       properties: {

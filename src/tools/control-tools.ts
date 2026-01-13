@@ -124,7 +124,12 @@ export function registerControlTools(
   // dg_set_strength - 设置通道强度
   toolManager.registerTool(
     "dg_set_strength",
-    "设置设备通道强度",
+    `设置设备通道强度。必须在boundToApp为true后才能使用。
+参数说明：
+- channel: A或B通道
+- mode: increase(增加)/decrease(减少)/set(直接设置)
+- value: 强度值0-200，但实际不能超过strengthLimit
+使用前请先用dg_get_status确认设备已绑定APP且了解当前强度上限。`,
     {
       type: "object",
       properties: {
@@ -194,7 +199,10 @@ export function registerControlTools(
   // dg_send_waveform - 发送波形数据
   toolManager.registerTool(
     "dg_send_waveform",
-    "发送波形数据到设备",
+    `发送波形数据到设备，控制输出模式。必须在boundToApp为true后才能使用。
+波形数据格式：每项为16字符HEX字符串（8字节），最多100项。
+可配合dg_get_waveform获取已保存的波形hexWaveforms数组直接使用。
+波形会按顺序播放，播放完毕后停止。`,
     {
       type: "object",
       properties: {
@@ -259,7 +267,8 @@ export function registerControlTools(
   // dg_clear_waveform - 清空波形队列
   toolManager.registerTool(
     "dg_clear_waveform",
-    "清空设备波形队列",
+    `清空设备指定通道的波形队列，立即停止当前波形播放。
+用于中断正在播放的波形或在发送新波形前清空队列。`,
     {
       type: "object",
       properties: {
@@ -312,7 +321,12 @@ export function registerControlTools(
   // dg_get_status - 获取设备状态
   toolManager.registerTool(
     "dg_get_status",
-    "获取设备状态",
+    `获取设备完整状态信息。
+关键字段：
+- boundToApp: 是否已绑定APP（必须为true才能控制设备）
+- strengthA/B: 当前A/B通道强度
+- strengthLimitA/B: A/B通道强度上限（由APP设置，不可超过）
+建议在dg_connect后轮询此接口检查boundToApp状态。`,
     {
       type: "object",
       properties: {

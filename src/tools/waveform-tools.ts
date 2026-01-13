@@ -7,7 +7,7 @@
  * - dg_delete_waveform: 按名称删除波形
  */
 
-import type { Tool, ToolResult, ToolHandler, JsonSchema } from "../tool-manager";
+import type { Tool, ToolResult, ToolHandler } from "../tool-manager";
 import { WaveformStorage, persistWaveforms } from "../waveform-storage";
 import { parseWaveform } from "../waveform-parser";
 
@@ -73,7 +73,10 @@ function createToolSuccess(data: unknown): ToolResult {
  */
 export const dgParseWaveformTool: ToolWithHandler = {
   name: "dg_parse_waveform",
-  description: "解析波形数据（Dungeonlab+pulse:格式）并以指定名称保存波形",
+  description: `解析并保存波形数据。
+输入格式：Dungeonlab+pulse:开头的Base64编码字符串（从DG-LAB APP导出）。
+解析后保存为hexWaveforms数组，可通过dg_get_waveform获取并用dg_send_waveform发送。
+如果name已存在会覆盖原有波形。`,
   inputSchema: {
     type: "object",
     properties: {
@@ -132,7 +135,9 @@ export const dgParseWaveformTool: ToolWithHandler = {
  */
 export const dgListWaveformsTool: ToolWithHandler = {
   name: "dg_list_waveforms",
-  description: "列出所有保存的波形",
+  description: `列出所有已保存的波形名称和数据量。
+返回每个波形的name和hexWaveformCount（波形数据条数）。
+用于查看可用波形，然后通过dg_get_waveform获取具体数据。`,
   inputSchema: {
     type: "object",
     properties: {},
@@ -160,7 +165,9 @@ export const dgListWaveformsTool: ToolWithHandler = {
  */
 export const dgGetWaveformTool: ToolWithHandler = {
   name: "dg_get_waveform",
-  description: "按名称获取波形详细信息和hexWaveforms数据",
+  description: `按名称获取波形的hexWaveforms数组。
+返回的hexWaveforms可直接传给dg_send_waveform的waveforms参数使用。
+典型流程：dg_list_waveforms查看可用波形 → dg_get_waveform获取数据 → dg_send_waveform发送到设备。`,
   inputSchema: {
     type: "object",
     properties: {
@@ -198,7 +205,8 @@ export const dgGetWaveformTool: ToolWithHandler = {
  */
 export const dgDeleteWaveformTool: ToolWithHandler = {
   name: "dg_delete_waveform",
-  description: "按名称删除波形",
+  description: `按名称删除已保存的波形。
+删除后无法恢复，需要重新用dg_parse_waveform解析保存。`,
   inputSchema: {
     type: "object",
     properties: {
