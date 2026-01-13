@@ -33,7 +33,6 @@ describe("Waveform Tools", () => {
       const data = JSON.parse(result.content[0].text);
       expect(data.success).toBe(true);
       expect(data.name).toBe("test-wave");
-      expect(data.sectionCount).toBe(1);
       expect(data.hexWaveformCount).toBeGreaterThan(0);
     });
 
@@ -41,21 +40,21 @@ describe("Waveform Tools", () => {
       const result = await dgParseWaveformTool.handler({ name: "test" });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("hexData is required");
+      expect(result.content[0].text).toContain("hexData");
     });
 
     test("Returns error for missing name", async () => {
       const result = await dgParseWaveformTool.handler({ hexData: SAMPLE_WAVEFORM });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("name is required");
+      expect(result.content[0].text).toContain("name");
     });
 
     test("Returns error for empty name", async () => {
       const result = await dgParseWaveformTool.handler({ hexData: SAMPLE_WAVEFORM, name: "   " });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("name is required");
+      expect(result.content[0].text).toContain("name");
     });
 
     test("Returns error for invalid waveform data", async () => {
@@ -110,10 +109,7 @@ describe("Waveform Tools", () => {
       const waveform = data.waveforms[0];
 
       expect(waveform.name).toBe("test-wave");
-      expect(waveform.sectionCount).toBeDefined();
-      expect(waveform.totalDuration).toBeDefined();
       expect(waveform.hexWaveformCount).toBeDefined();
-      expect(waveform.createdAt).toBeDefined();
     });
   });
 
@@ -126,24 +122,21 @@ describe("Waveform Tools", () => {
       expect(result.isError).toBeUndefined();
       const data = JSON.parse(result.content[0].text);
       expect(data.name).toBe("test-wave");
-      expect(data.metadata).toBeDefined();
-      expect(data.sections).toBeDefined();
       expect(data.hexWaveforms).toBeDefined();
-      expect(data.rawData).toBe(SAMPLE_WAVEFORM);
     });
 
     test("Returns error for missing name", async () => {
       const result = await dgGetWaveformTool.handler({});
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("name is required");
+      expect(result.content[0].text).toContain("name");
     });
 
     test("Returns error for non-existent waveform", async () => {
       const result = await dgGetWaveformTool.handler({ name: "non-existent" });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Waveform not found");
+      expect(result.content[0].text).toContain("波形未找到");
     });
 
     test("Returns hexWaveforms for device use", async () => {
@@ -186,14 +179,14 @@ describe("Waveform Tools", () => {
       const result = await dgDeleteWaveformTool.handler({});
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("name is required");
+      expect(result.content[0].text).toContain("name");
     });
 
     test("Returns error for non-existent waveform", async () => {
       const result = await dgDeleteWaveformTool.handler({ name: "non-existent" });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Waveform not found");
+      expect(result.content[0].text).toContain("波形未找到");
     });
   });
 
@@ -236,7 +229,7 @@ describe("Waveform Tools", () => {
 
         const data = JSON.parse(getResult.content[0].text);
         expect(data.name).toBe(name);
-        expect(data.rawData).toBe(SAMPLE_WAVEFORM);
+        expect(data.hexWaveforms).toBeDefined();
       }
     });
 

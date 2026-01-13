@@ -112,23 +112,23 @@ describe("Waveform Parser - Dungeonlab+pulse Format", () => {
 
   describe("Error Handling", () => {
     test("Throws error for invalid format prefix", () => {
-      expect(() => parseWaveform("invalid data", "test")).toThrow("Invalid waveform format");
+      expect(() => parseWaveform("invalid data", "test")).toThrow("无效的波形格式");
     });
 
     test("Throws error for missing equals separator", () => {
-      expect(() => parseWaveform("Dungeonlab+pulse:0,1,8", "test")).toThrow("missing '=' separator");
+      expect(() => parseWaveform("Dungeonlab+pulse:0,1,8", "test")).toThrow("'=' 分隔符");
     });
 
     test("Throws error for missing slash separator", () => {
-      expect(() => parseWaveform("Dungeonlab+pulse:0,1,8=10,20,4,1,1", "test")).toThrow("missing '/' separator");
+      expect(() => parseWaveform("Dungeonlab+pulse:0,1,8=10,20,4,1,1", "test")).toThrow("'/' 分隔符");
     });
 
     test("Throws error for insufficient shape points", () => {
-      expect(() => parseWaveform("Dungeonlab+pulse:0,1,8=10,20,4,1,1/50-1", "test")).toThrow("at least 2 shape points");
+      expect(() => parseWaveform("Dungeonlab+pulse:0,1,8=10,20,4,1,1/50-1", "test")).toThrow("至少有 2 个形状点");
     });
 
     test("Throws error for no enabled sections", () => {
-      expect(() => parseWaveform("Dungeonlab+pulse:0,1,8=10,20,4,1,0/0-1,100-1", "test")).toThrow("no enabled sections");
+      expect(() => parseWaveform("Dungeonlab+pulse:0,1,8=10,20,4,1,0/0-1,100-1", "test")).toThrow("没有启用的小节");
     });
   });
 
