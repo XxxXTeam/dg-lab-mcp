@@ -185,8 +185,6 @@ export function registerControlTools(
           success: true,
           deviceId: session.deviceId,
           channel,
-          mode,
-          value,
           currentStrength: newStrength,
         })
       );
@@ -253,7 +251,6 @@ export function registerControlTools(
           deviceId: session.deviceId,
           channel,
           waveformCount: waveforms.length,
-          durationMs: waveforms.length * 100,
         })
       );
     }
@@ -307,7 +304,6 @@ export function registerControlTools(
           success: true,
           deviceId: session.deviceId,
           channel,
-          message: `已清空通道 ${channel} 的波形队列`,
         })
       );
     }
@@ -336,7 +332,6 @@ export function registerControlTools(
       return createToolResult(
         JSON.stringify({
           deviceId: session.deviceId,
-          clientId: session.clientId,
           alias: session.alias,
           connected: session.connected,
           boundToApp: isBound,
@@ -344,7 +339,6 @@ export function registerControlTools(
           strengthB: session.strengthB,
           strengthLimitA: session.strengthLimitA,
           strengthLimitB: session.strengthLimitB,
-          lastActive: session.lastActive.toISOString(),
         })
       );
     }

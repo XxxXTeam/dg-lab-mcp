@@ -114,20 +114,8 @@ export const dgParseWaveformTool: ToolWithHandler = {
       return createToolSuccess({
         success: true,
         name: waveform.name,
-        format: "new-text",
         overwritten: existed,
-        metadata: {
-          startFrequencies: waveform.metadata.startFrequencies,
-          endFrequencies: waveform.metadata.endFrequencies,
-          durations: waveform.metadata.durations,
-          frequencyModes: waveform.metadata.frequencyModes,
-          section2Enabled: waveform.metadata.section2Enabled,
-          section3Enabled: waveform.metadata.section3Enabled,
-          playbackSpeed: waveform.metadata.playbackSpeed,
-        },
-        sectionCount: waveform.sections.length,
         hexWaveformCount: waveform.hexWaveforms.length,
-        createdAt: waveform.createdAt.toISOString(),
       });
     } catch (error) {
       if (error instanceof Error) {
@@ -156,10 +144,7 @@ export const dgListWaveformsTool: ToolWithHandler = {
 
     const list = waveforms.map((w) => ({
       name: w.name,
-      sectionCount: w.sections.length,
-      totalDuration: w.metadata.durations.reduce((a, b) => a + b, 0),
       hexWaveformCount: w.hexWaveforms.length,
-      createdAt: w.createdAt.toISOString(),
     }));
 
     return createToolSuccess({
@@ -202,11 +187,7 @@ export const dgGetWaveformTool: ToolWithHandler = {
 
     return createToolSuccess({
       name: waveform.name,
-      metadata: waveform.metadata,
-      sections: waveform.sections,
       hexWaveforms: waveform.hexWaveforms,
-      rawData: waveform.rawData,
-      createdAt: waveform.createdAt.toISOString(),
     });
   },
 };

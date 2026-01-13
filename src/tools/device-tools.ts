@@ -7,7 +7,6 @@ import type { ToolManager } from "../tool-manager";
 import { createToolResult, createToolError } from "../tool-manager";
 import type { SessionManager } from "../session-manager";
 import type { DGLabWSServer } from "../ws-server";
-import { getConfig } from "../config";
 import * as os from "os";
 
 /**
@@ -38,7 +37,6 @@ export function registerDeviceTools(
   sessionManager: SessionManager,
   wsServer: DGLabWSServer
 ): void {
-  const config = getConfig();
   const localIP = getLocalIP();
 
   // dg_connect - 创建新的设备连接
@@ -66,15 +64,11 @@ export function registerDeviceTools(
 
         // 生成二维码 URL
         const qrCodeUrl = wsServer.getQRCodeUrl(clientId, localIP);
-        const wsUrl = wsServer.getWSUrl(clientId, localIP);
 
         return createToolResult(
           JSON.stringify({
             deviceId: session.deviceId,
-            clientId,
             qrCodeUrl,
-            wsUrl,
-            status: "waiting_for_app",
             message: "请使用DG-LAB APP扫描二维码进行绑定",
           })
         );
@@ -114,7 +108,6 @@ export function registerDeviceTools(
         
         return {
           deviceId: s.deviceId,
-          clientId: s.clientId,
           alias: s.alias,
           connected: s.connected,
           boundToApp: isBound,
@@ -122,7 +115,6 @@ export function registerDeviceTools(
           strengthB: s.strengthB,
           strengthLimitA: s.strengthLimitA,
           strengthLimitB: s.strengthLimitB,
-          lastActive: s.lastActive.toISOString(),
         };
       });
 
@@ -169,7 +161,6 @@ export function registerDeviceTools(
           success: true,
           deviceId,
           alias,
-          message: `已将设备 ${deviceId} 的别名设置为 "${alias}"`,
         })
       );
     }
@@ -202,7 +193,6 @@ export function registerDeviceTools(
         
         return {
           deviceId: s.deviceId,
-          clientId: s.clientId,
           alias: s.alias,
           connected: s.connected,
           boundToApp: isBound,
@@ -217,7 +207,6 @@ export function registerDeviceTools(
         JSON.stringify({
           devices,
           count: devices.length,
-          searchAlias: alias,
         })
       );
     }
