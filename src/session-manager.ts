@@ -59,6 +59,10 @@ export interface DeviceSession {
   createdAt: Date;
   /** 连接超时定时器 ID（未绑定 APP 时有效） */
   connectionTimeoutId: ReturnType<typeof setTimeout> | null;
+  /** 重连超时定时器 ID（已绑定设备断开后等待重连时有效） */
+  reconnectionTimeoutId: ReturnType<typeof setTimeout> | null;
+  /** 设备断开连接的时间戳（连接时为 null） */
+  disconnectedAt: Date | null;
 }
 
 /**
@@ -72,12 +76,16 @@ export class SessionManager {
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   /** 连接超时时间（毫秒） */
   private connectionTimeoutMs: number;
+  /** 重连超时时间（毫秒） */
+  private reconnectionTimeoutMs: number;
 
-  constructor(connectionTimeoutMinutes: number = 5) {
+  constructor(connectionTimeoutMinutes: number = 5, reconnectionTimeoutMinutes: number = 5) {
     this.connectionTimeoutMs = connectionTimeoutMinutes * 60 * 1000;
+    this.reconnectionTimeoutMs = reconnectionTimeoutMinutes * 60 * 1000;
     // 启动时立即开始定期清理过期会话
     this.startCleanupTimer();
     console.log(`[会话] 连接超时设置: ${connectionTimeoutMinutes} 分钟`);
+    console.log(`[会话] 重连超时设置: ${reconnectionTimeoutMinutes} 分钟`);
   }
 
   /**
@@ -108,6 +116,8 @@ export class SessionManager {
       lastActive: now,
       createdAt: now,
       connectionTimeoutId: null,
+      reconnectionTimeoutId: null,
+      disconnectedAt: null,
     };
 
     // 启动连接超时计时器
@@ -187,6 +197,11 @@ export class SessionManager {
       if (session.connectionTimeoutId) {
         clearTimeout(session.connectionTimeoutId);
         session.connectionTimeoutId = null;
+      }
+      // 清理重连超时计时器
+      if (session.reconnectionTimeoutId) {
+        clearTimeout(session.reconnectionTimeoutId);
+        session.reconnectionTimeoutId = null;
       }
       if (session.ws) {
         try { session.ws.close(); } catch { /* 忽略 */ }
@@ -330,6 +345,101 @@ export class SessionManager {
   }
 
   /**
+   * 处理设备断开连接
+   * 
+   * 如果设备已绑定，启动重连超时计时器并保留会话。
+   * 如果设备未绑定，立即删除会话。
+   * 
+   * @param deviceId - 设备 ID
+   * @returns 是否保留会话等待重连（true=保留，false=已删除）
+   */
+  handleDisconnection(deviceId: string): boolean {
+    const session = this.sessions.get(deviceId);
+    if (!session) return false;
+
+    // 取消连接超时计时器（如果还在运行）
+    if (session.connectionTimeoutId) {
+      clearTimeout(session.connectionTimeoutId);
+      session.connectionTimeoutId = null;
+    }
+
+    // 如果设备从未绑定，立即删除会话
+    if (!session.boundToApp) {
+      console.log(`[会话] 未绑定设备断开: ${deviceId}，立即删除`);
+      this.deleteSession(deviceId);
+      return false;
+    }
+
+    // 设备已绑定，保留会话并启动重连超时
+    session.connected = false;
+    session.disconnectedAt = new Date();
+    session.ws = null;
+
+    // 启动重连超时计时器
+    session.reconnectionTimeoutId = setTimeout(() => {
+      const currentSession = this.sessions.get(deviceId);
+      if (currentSession && !currentSession.connected) {
+        console.log(`[会话] 重连超时: ${deviceId} (${this.reconnectionTimeoutMs / 60000} 分钟内未重连)`);
+        this.deleteSession(deviceId);
+      }
+    }, this.reconnectionTimeoutMs);
+
+    console.log(`[会话] 设备断开: ${deviceId}，等待重连 (${this.reconnectionTimeoutMs / 60000} 分钟)`);
+    return true;
+  }
+
+  /**
+   * 处理设备重新连接
+   * 
+   * 恢复会话到已连接状态，取消重连超时计时器。
+   * 保留所有会话数据（别名、强度等）。
+   * 
+   * @param deviceId - 设备 ID
+   * @param ws - 新的 WebSocket 连接
+   * @param clientId - WebSocket 服务器分配的新 clientId
+   * @returns 是否成功重连
+   */
+  handleReconnection(deviceId: string, ws: WebSocket, clientId: string): boolean {
+    const session = this.sessions.get(deviceId);
+    if (!session) return false;
+
+    // 取消重连超时计时器
+    if (session.reconnectionTimeoutId) {
+      clearTimeout(session.reconnectionTimeoutId);
+      session.reconnectionTimeoutId = null;
+    }
+
+    // 恢复连接状态
+    session.ws = ws;
+    session.clientId = clientId;
+    session.connected = true;
+    session.disconnectedAt = null;
+    session.lastActive = new Date();
+
+    console.log(`[会话] 设备重连成功: ${deviceId}`);
+    return true;
+  }
+
+  /**
+   * 获取剩余重连时间
+   * 
+   * 计算设备断开后还有多少时间可以重连。
+   * 
+   * @param deviceId - 设备 ID
+   * @returns 剩余时间（毫秒），如果设备已连接或不存在则返回 null
+   */
+  getReconnectionTimeRemaining(deviceId: string): number | null {
+    const session = this.sessions.get(deviceId);
+    if (!session || session.connected || !session.disconnectedAt) {
+      return null;
+    }
+
+    const elapsed = Date.now() - session.disconnectedAt.getTime();
+    const remaining = this.reconnectionTimeoutMs - elapsed;
+    return remaining > 0 ? remaining : 0;
+  }
+
+  /**
    * 获取当前会话数量
    */
   get sessionCount(): number {
@@ -407,6 +517,10 @@ export class SessionManager {
       // 清理连接超时计时器
       if (session.connectionTimeoutId) {
         clearTimeout(session.connectionTimeoutId);
+      }
+      // 清理重连超时计时器
+      if (session.reconnectionTimeoutId) {
+        clearTimeout(session.reconnectionTimeoutId);
       }
       if (session.ws) {
         try { session.ws.close(); } catch { /* 忽略 */ }

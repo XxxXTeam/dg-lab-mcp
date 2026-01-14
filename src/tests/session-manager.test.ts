@@ -339,4 +339,619 @@ describe("Session Manager", () => {
       manager2.clearAll();
     });
   });
+
+  /**
+   * Feature: device-reconnection-timeout
+   * Property 3: Session Preservation on Bound Device Disconnection
+   * 
+   * 属性：对于任何已绑定的设备会话，当设备断开连接时，会话应保留在内存中，
+   * 状态为 connected=false, boundToApp=true，并且 reconnectionTimeoutId 不为 null
+   * 
+   * Validates: Requirements 2.1, 2.2
+   */
+  describe("Property 3: Session Preservation on Bound Device Disconnection", () => {
+  test("已绑定设备断开后会话被保留", () => {
+    const manager = new SessionManager(5, 5);
+    const session = manager.createSession();
+
+    // 绑定设备
+    manager.updateConnectionState(session.deviceId, { boundToApp: true, connected: true });
+
+    // 断开连接
+    const preserved = manager.handleDisconnection(session.deviceId);
+
+    // 会话应该被保留
+    expect(preserved).toBe(true);
+
+    // 检查会话状态
+    const updatedSession = manager.getSession(session.deviceId);
+    expect(updatedSession).not.toBeNull();
+    expect(updatedSession!.connected).toBe(false);
+    expect(updatedSession!.boundToApp).toBe(true);
+    expect(updatedSession!.reconnectionTimeoutId).not.toBeNull();
+    expect(updatedSession!.disconnectedAt).not.toBeNull();
+    expect(updatedSession!.ws).toBeNull();
+
+    manager.stopCleanupTimer();
+    manager.clearAll();
+  });
+
+  test("属性测试：所有已绑定设备断开后都应保留会话", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 60 }), // reconnection timeout
+        fc.string({ minLength: 1, maxLength: 20 }), // alias
+        fc.integer({ min: 0, max: 200 }), // strengthA
+        fc.integer({ min: 0, max: 200 }), // strengthB
+        (timeout, alias, strengthA, strengthB) => {
+          const manager = new SessionManager(5, timeout);
+          const session = manager.createSession();
+
+          // 设置会话数据
+          manager.setAlias(session.deviceId, alias);
+          manager.updateStrength(session.deviceId, strengthA, strengthB, 200, 200);
+          manager.updateConnectionState(session.deviceId, { boundToApp: true, connected: true });
+
+          // 断开连接
+          const preserved = manager.handleDisconnection(session.deviceId);
+
+          // 验证会话被保留
+          const result = preserved === true;
+          const updatedSession = manager.getSession(session.deviceId);
+          const stateCorrect =
+            updatedSession !== null &&
+            updatedSession.connected === false &&
+            updatedSession.boundToApp === true &&
+            updatedSession.reconnectionTimeoutId !== null &&
+            updatedSession.disconnectedAt !== null;
+
+          manager.stopCleanupTimer();
+          manager.clearAll();
+
+          return result && stateCorrect;
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
 });
+
+/**
+ * Feature: device-reconnection-timeout
+ * Property 5: Unbound Device Immediate Deletion
+ * 
+ * 属性：对于任何未绑定的设备会话（boundToApp=false），当设备断开连接时，
+ * 会话应立即从内存中删除
+ * 
+ * Validates: Requirements 2.4
+ */
+describe("Property 5: Unbound Device Immediate Deletion", () => {
+  test("未绑定设备断开后会话被立即删除", () => {
+    const manager = new SessionManager(5, 5);
+    const session = manager.createSession();
+
+    // 不绑定设备，直接断开
+    const preserved = manager.handleDisconnection(session.deviceId);
+
+    // 会话应该被删除
+    expect(preserved).toBe(false);
+    expect(manager.getSession(session.deviceId)).toBeNull();
+
+    manager.stopCleanupTimer();
+  });
+
+  test("属性测试：所有未绑定设备断开后都应立即删除", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 60 }), // reconnection timeout
+        (timeout) => {
+          const manager = new SessionManager(5, timeout);
+          const session = manager.createSession();
+
+          // 确保设备未绑定
+          expect(session.boundToApp).toBe(false);
+
+          // 断开连接
+          const preserved = manager.handleDisconnection(session.deviceId);
+
+          // 验证会话被删除
+          const deleted = preserved === false && manager.getSession(session.deviceId) === null;
+
+          manager.stopCleanupTimer();
+          manager.clearAll();
+
+          return deleted;
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+});
+
+/**
+ * Feature: device-reconnection-timeout
+ * Property 4: Session Data Invariance
+ * 
+ * 属性：对于任何具有特定别名和强度值的设备会话，断开连接和重新连接应保持所有这些值不变
+ * 
+ * Validates: Requirements 2.3, 3.3
+ */
+describe("Property 4: Session Data Invariance", () => {
+  test("断开连接保留会话数据", () => {
+    const manager = new SessionManager(5, 5);
+    const session = manager.createSession();
+
+    // 设置会话数据
+    const alias = "test-device";
+    const strengthA = 100;
+    const strengthB = 150;
+    const limitA = 180;
+    const limitB = 190;
+
+    manager.setAlias(session.deviceId, alias);
+    manager.updateStrength(session.deviceId, strengthA, strengthB, limitA, limitB);
+    manager.updateConnectionState(session.deviceId, { boundToApp: true, connected: true });
+
+    // 断开连接
+    manager.handleDisconnection(session.deviceId);
+
+    // 验证数据未改变
+    const updatedSession = manager.getSession(session.deviceId);
+    expect(updatedSession).not.toBeNull();
+    expect(updatedSession!.alias).toBe(alias);
+    expect(updatedSession!.strengthA).toBe(strengthA);
+    expect(updatedSession!.strengthB).toBe(strengthB);
+    expect(updatedSession!.strengthLimitA).toBe(limitA);
+    expect(updatedSession!.strengthLimitB).toBe(limitB);
+
+    manager.stopCleanupTimer();
+    manager.clearAll();
+  });
+
+  test("属性测试：断开连接不改变任何会话数据", () => {
+    fc.assert(
+      fc.property(
+        fc.string({ minLength: 1, maxLength: 30 }), // alias
+        fc.integer({ min: 0, max: 200 }), // strengthA
+        fc.integer({ min: 0, max: 200 }), // strengthB
+        fc.integer({ min: 0, max: 200 }), // limitA
+        fc.integer({ min: 0, max: 200 }), // limitB
+        (alias, strengthA, strengthB, limitA, limitB) => {
+          const manager = new SessionManager(5, 5);
+          const session = manager.createSession();
+
+          // 设置会话数据
+          manager.setAlias(session.deviceId, alias);
+          manager.updateStrength(session.deviceId, strengthA, strengthB, limitA, limitB);
+          manager.updateConnectionState(session.deviceId, { boundToApp: true, connected: true });
+
+          // 断开连接
+          manager.handleDisconnection(session.deviceId);
+
+          // 验证所有数据不变
+          const updatedSession = manager.getSession(session.deviceId);
+          const dataPreserved =
+            updatedSession !== null &&
+            updatedSession.alias === alias &&
+            updatedSession.strengthA === strengthA &&
+            updatedSession.strengthB === strengthB &&
+            updatedSession.strengthLimitA === limitA &&
+            updatedSession.strengthLimitB === limitB;
+
+          manager.stopCleanupTimer();
+          manager.clearAll();
+
+          return dataPreserved;
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  /**
+   * Feature: device-reconnection-timeout
+   * Property 7: Successful Reconnection
+   * 
+   * 属性：对于任何断开的设备会话，当设备在超时窗口内重连时，
+   * 会话应转换为 connected=true 且 reconnectionTimeoutId=null
+   * 
+   * Validates: Requirements 3.1, 3.2
+   */
+  describe("Property 7: Successful Reconnection", () => {
+    test("设备重连后恢复连接状态", () => {
+      const manager = new SessionManager(5, 5);
+      const session = manager.createSession();
+
+      // 绑定并断开
+      manager.updateConnectionState(session.deviceId, { boundToApp: true, connected: true });
+      manager.handleDisconnection(session.deviceId);
+
+      // 模拟重连
+      const mockWs = {} as WebSocket;
+      const newClientId = "new-client-123";
+      const success = manager.handleReconnection(session.deviceId, mockWs, newClientId);
+
+      expect(success).toBe(true);
+
+      // 验证状态
+      const updatedSession = manager.getSession(session.deviceId);
+      expect(updatedSession).not.toBeNull();
+      expect(updatedSession!.connected).toBe(true);
+      expect(updatedSession!.reconnectionTimeoutId).toBeNull();
+      expect(updatedSession!.disconnectedAt).toBeNull();
+      expect(updatedSession!.ws).toBe(mockWs);
+      expect(updatedSession!.clientId).toBe(newClientId);
+
+      manager.stopCleanupTimer();
+      manager.clearAll();
+    });
+
+    test("属性测试：所有断开的设备重连后都应恢复状态", () => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 1, max: 60 }), // reconnection timeout
+          fc.string({ minLength: 5, maxLength: 20 }), // clientId
+          (timeout, clientId) => {
+            const manager = new SessionManager(5, timeout);
+            const session = manager.createSession();
+
+            // 绑定并断开
+            manager.updateConnectionState(session.deviceId, { boundToApp: true, connected: true });
+            manager.handleDisconnection(session.deviceId);
+
+            // 重连
+            const mockWs = {} as WebSocket;
+            const success = manager.handleReconnection(session.deviceId, mockWs, clientId);
+
+            // 验证
+            const updatedSession = manager.getSession(session.deviceId);
+            const stateCorrect =
+              success === true &&
+              updatedSession !== null &&
+              updatedSession.connected === true &&
+              updatedSession.reconnectionTimeoutId === null &&
+              updatedSession.disconnectedAt === null &&
+              updatedSession.ws === mockWs &&
+              updatedSession.clientId === clientId;
+
+            manager.stopCleanupTimer();
+            manager.clearAll();
+
+            return stateCorrect;
+          }
+        ),
+        { numRuns: 100 }
+      );
+    });
+  });
+
+  /**
+   * Feature: device-reconnection-timeout
+   * Property 8: WebSocket Reference Update on Reconnection
+   * 
+   * 属性：对于任何重连的设备，会话的 ws 字段应更新为新的 WebSocket 连接
+   * 
+   * Validates: Requirements 3.4
+   */
+  describe("Property 8: WebSocket Reference Update on Reconnection", () => {
+    test("重连时更新 WebSocket 引用", () => {
+      const manager = new SessionManager(5, 5);
+      const session = manager.createSession();
+
+      // 绑定并断开
+      const oldWs = {} as WebSocket;
+      manager.updateConnectionState(session.deviceId, { boundToApp: true, connected: true, ws: oldWs });
+      manager.handleDisconnection(session.deviceId);
+
+      // 验证断开后 ws 为 null
+      let updatedSession = manager.getSession(session.deviceId);
+      expect(updatedSession!.ws).toBeNull();
+
+      // 重连
+      const newWs = {} as WebSocket;
+      manager.handleReconnection(session.deviceId, newWs, "new-client");
+
+      // 验证 ws 已更新
+      updatedSession = manager.getSession(session.deviceId);
+      expect(updatedSession!.ws).toBe(newWs);
+      expect(updatedSession!.ws).not.toBe(oldWs);
+
+      manager.stopCleanupTimer();
+      manager.clearAll();
+    });
+
+    test("属性测试：重连总是更新 WebSocket 引用", () => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 1, max: 10 }), // 重连次数
+          (reconnectCount) => {
+            const manager = new SessionManager(5, 5);
+            const session = manager.createSession();
+
+            // 绑定
+            manager.updateConnectionState(session.deviceId, { boundToApp: true, connected: true });
+
+            let lastWs: WebSocket | null = null;
+            for (let i = 0; i < reconnectCount; i++) {
+              // 断开
+              manager.handleDisconnection(session.deviceId);
+
+              // 重连
+              const newWs = { id: i } as WebSocket;
+              manager.handleReconnection(session.deviceId, newWs, `client-${i}`);
+
+              // 验证 ws 已更新
+              const updatedSession = manager.getSession(session.deviceId);
+              if (updatedSession!.ws !== newWs || (lastWs && updatedSession!.ws === lastWs)) {
+                manager.stopCleanupTimer();
+                manager.clearAll();
+                return false;
+              }
+
+              lastWs = newWs;
+            }
+
+            manager.stopCleanupTimer();
+            manager.clearAll();
+            return true;
+          }
+        ),
+        { numRuns: 50 }
+      );
+    });
+  });
+
+  /**
+   * Feature: device-reconnection-timeout
+   * Property 10: Timer Cleanup on Manual Deletion
+   * 
+   * 属性：对于任何具有活动重连超时计时器的会话，手动删除会话应取消计时器
+   * 
+   * Validates: Requirements 5.3
+   */
+  describe("Property 10: Timer Cleanup on Manual Deletion", () => {
+    test("删除会话时清理重连计时器", () => {
+      const manager = new SessionManager(5, 5);
+      const session = manager.createSession();
+
+      // 绑定并断开（启动重连计时器）
+      manager.updateConnectionState(session.deviceId, { boundToApp: true, connected: true });
+      manager.handleDisconnection(session.deviceId);
+
+      // 验证计时器存在
+      let updatedSession = manager.getSession(session.deviceId);
+      expect(updatedSession!.reconnectionTimeoutId).not.toBeNull();
+
+      // 删除会话
+      const deleted = manager.deleteSession(session.deviceId);
+      expect(deleted).toBe(true);
+
+      // 会话应该被删除
+      expect(manager.getSession(session.deviceId)).toBeNull();
+
+      manager.stopCleanupTimer();
+    });
+
+    test("属性测试：删除任何有重连计时器的会话都应清理计时器", () => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 1, max: 60 }), // reconnection timeout
+          (timeout) => {
+            const manager = new SessionManager(5, timeout);
+            const session = manager.createSession();
+
+            // 绑定并断开
+            manager.updateConnectionState(session.deviceId, { boundToApp: true, connected: true });
+            manager.handleDisconnection(session.deviceId);
+
+            // 删除会话（应该清理计时器）
+            const deleted = manager.deleteSession(session.deviceId);
+
+            // 验证会话已删除
+            const result = deleted === true && manager.getSession(session.deviceId) === null;
+
+            manager.stopCleanupTimer();
+            manager.clearAll();
+
+            return result;
+          }
+        ),
+        { numRuns: 100 }
+      );
+    });
+  });
+
+  /**
+   * Feature: device-reconnection-timeout
+   * clearAll 计时器清理测试
+   * 
+   * Validates: Requirements 5.4
+   */
+  describe("clearAll Timer Cleanup", () => {
+    test("clearAll 清理所有重连计时器", () => {
+      const manager = new SessionManager(5, 5);
+
+      // 创建多个会话，有些有重连计时器
+      const session1 = manager.createSession();
+      const session2 = manager.createSession();
+      const session3 = manager.createSession();
+
+      // session1: 有连接超时计时器（未绑定）
+      // session2: 有重连超时计时器（已绑定并断开）
+      manager.updateConnectionState(session2.deviceId, { boundToApp: true, connected: true });
+      manager.handleDisconnection(session2.deviceId);
+
+      // session3: 已连接（无计时器）
+      manager.updateConnectionState(session3.deviceId, { boundToApp: true, connected: true });
+
+      expect(manager.sessionCount).toBe(3);
+
+      // 清理所有会话
+      manager.clearAll();
+
+      // 所有会话应该被删除
+      expect(manager.sessionCount).toBe(0);
+      expect(manager.getSession(session1.deviceId)).toBeNull();
+      expect(manager.getSession(session2.deviceId)).toBeNull();
+      expect(manager.getSession(session3.deviceId)).toBeNull();
+
+      manager.stopCleanupTimer();
+    });
+  });
+});
+});
+
+  /**
+   * Feature: device-reconnection-timeout
+   * Property 11: Separate Timer Management
+   * 
+   * 属性：连接超时计时器和重连超时计时器应该独立管理，互不干扰
+   * 
+   * Validates: Requirements 6.2
+   */
+  describe("Property 11: Separate Timer Management", () => {
+    test("连接超时和重连超时计时器独立管理", () => {
+      const manager = new SessionManager(5, 5);
+      const session = manager.createSession();
+
+      // 初始状态：只有连接超时计时器
+      expect(session.connectionTimeoutId).not.toBeNull();
+      expect(session.reconnectionTimeoutId).toBeNull();
+
+      // 绑定 APP（取消连接超时）
+      manager.onAppBound(session.deviceId);
+      let updatedSession = manager.getSession(session.deviceId);
+      expect(updatedSession!.connectionTimeoutId).toBeNull();
+      expect(updatedSession!.reconnectionTimeoutId).toBeNull();
+
+      // 断开连接（启动重连超时）
+      manager.handleDisconnection(session.deviceId);
+      updatedSession = manager.getSession(session.deviceId);
+      expect(updatedSession!.connectionTimeoutId).toBeNull();
+      expect(updatedSession!.reconnectionTimeoutId).not.toBeNull();
+
+      // 重连（取消重连超时）
+      const mockWs = {} as any;
+      manager.handleReconnection(session.deviceId, mockWs, "client-123");
+      updatedSession = manager.getSession(session.deviceId);
+      expect(updatedSession!.connectionTimeoutId).toBeNull();
+      expect(updatedSession!.reconnectionTimeoutId).toBeNull();
+
+      manager.stopCleanupTimer();
+      manager.clearAll();
+    });
+
+    test("属性测试：计时器在不同阶段独立工作", () => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 1, max: 60 }), // connection timeout
+          fc.integer({ min: 1, max: 60 }), // reconnection timeout
+          (connTimeout, reconTimeout) => {
+            const manager = new SessionManager(connTimeout, reconTimeout);
+            const session = manager.createSession();
+
+            // 阶段 1: 创建后只有连接超时
+            const phase1 =
+              session.connectionTimeoutId !== null && session.reconnectionTimeoutId === null;
+
+            // 阶段 2: 绑定后两个都为 null
+            manager.onAppBound(session.deviceId);
+            let updatedSession = manager.getSession(session.deviceId);
+            const phase2 =
+              updatedSession!.connectionTimeoutId === null &&
+              updatedSession!.reconnectionTimeoutId === null;
+
+            // 阶段 3: 断开后只有重连超时
+            manager.handleDisconnection(session.deviceId);
+            updatedSession = manager.getSession(session.deviceId);
+            const phase3 =
+              updatedSession!.connectionTimeoutId === null &&
+              updatedSession!.reconnectionTimeoutId !== null;
+
+            // 阶段 4: 重连后两个都为 null
+            const mockWs = {} as any;
+            manager.handleReconnection(session.deviceId, mockWs, "client");
+            updatedSession = manager.getSession(session.deviceId);
+            const phase4 =
+              updatedSession!.connectionTimeoutId === null &&
+              updatedSession!.reconnectionTimeoutId === null;
+
+            manager.stopCleanupTimer();
+            manager.clearAll();
+
+            return phase1 && phase2 && phase3 && phase4;
+          }
+        ),
+        { numRuns: 100 }
+      );
+    });
+  });
+
+  /**
+   * Feature: device-reconnection-timeout
+   * Property 13: Conditional Reconnection Timer Creation
+   * 
+   * 属性：只有已绑定的设备断开时才应创建重连超时计时器，未绑定的设备不应创建
+   * 
+   * Validates: Requirements 6.4
+   */
+  describe("Property 13: Conditional Reconnection Timer Creation", () => {
+    test("只有已绑定设备断开时才创建重连计时器", () => {
+      const manager = new SessionManager(5, 5);
+
+      // 场景 1: 未绑定设备断开 - 不创建重连计时器（会话被删除）
+      const unboundSession = manager.createSession();
+      manager.handleDisconnection(unboundSession.deviceId);
+      expect(manager.getSession(unboundSession.deviceId)).toBeNull();
+
+      // 场景 2: 已绑定设备断开 - 创建重连计时器
+      const boundSession = manager.createSession();
+      manager.updateConnectionState(boundSession.deviceId, { boundToApp: true, connected: true });
+      manager.handleDisconnection(boundSession.deviceId);
+      const updatedSession = manager.getSession(boundSession.deviceId);
+      expect(updatedSession).not.toBeNull();
+      expect(updatedSession!.reconnectionTimeoutId).not.toBeNull();
+
+      manager.stopCleanupTimer();
+      manager.clearAll();
+    });
+
+    test("属性测试：重连计时器创建取决于绑定状态", () => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 1, max: 60 }), // reconnection timeout
+          fc.boolean(), // is bound
+          (timeout, isBound) => {
+            const manager = new SessionManager(5, timeout);
+            const session = manager.createSession();
+
+            if (isBound) {
+              manager.updateConnectionState(session.deviceId, { boundToApp: true, connected: true });
+            }
+
+            // 断开连接
+            const preserved = manager.handleDisconnection(session.deviceId);
+            const updatedSession = manager.getSession(session.deviceId);
+
+            let result: boolean;
+            if (isBound) {
+              // 已绑定：会话保留，有重连计时器
+              result =
+                preserved === true &&
+                updatedSession !== null &&
+                updatedSession.reconnectionTimeoutId !== null;
+            } else {
+              // 未绑定：会话删除，无重连计时器
+              result = preserved === false && updatedSession === null;
+            }
+
+            manager.stopCleanupTimer();
+            manager.clearAll();
+
+            return result;
+          }
+        ),
+        { numRuns: 100 }
+      );
+    });
+  });

@@ -459,8 +459,11 @@ export function registerControlTools(
     `获取设备完整状态信息。
 关键字段：
 - boundToApp: 是否已绑定APP（必须为true才能控制设备）
+- connected: 设备是否已连接
 - strengthA/B: 当前A/B通道强度
 - strengthLimitA/B: A/B通道强度上限（由APP设置，不可超过）
+- disconnectedAt: 设备断开连接的时间戳（仅在断开时显示）
+- reconnectionTimeRemaining: 剩余重连时间（秒），仅在设备断开时显示
 建议在dg_connect后在用户说已完成后使用此接口检查boundToApp状态。`,
     {
       type: "object",
@@ -483,6 +486,12 @@ export function registerControlTools(
       // 检查 APP 绑定状态
       const isBound = session.clientId ? wsServer.isControllerBound(session.clientId) : false;
 
+      // 计算剩余重连时间（秒）
+      const reconnectionTimeRemaining = sessionManager.getReconnectionTimeRemaining(session.deviceId);
+      const reconnectionTimeRemainingSeconds = reconnectionTimeRemaining !== null 
+        ? Math.ceil(reconnectionTimeRemaining / 1000) 
+        : null;
+
       // 返回完整的设备状态信息
       return createToolResult(
         JSON.stringify({
@@ -494,6 +503,8 @@ export function registerControlTools(
           strengthB: session.strengthB,
           strengthLimitA: session.strengthLimitA,
           strengthLimitB: session.strengthLimitB,
+          disconnectedAt: session.disconnectedAt ? session.disconnectedAt.toISOString() : null,
+          reconnectionTimeRemaining: reconnectionTimeRemainingSeconds,
         })
       );
     }

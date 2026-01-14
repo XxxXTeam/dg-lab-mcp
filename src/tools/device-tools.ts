@@ -109,6 +109,7 @@ export function registerDeviceTools(
 - boundToApp: APP是否已扫码绑定（必须为true才能控制设备）
 - strengthA/B: 当前A/B通道强度(0-200)
 - strengthLimitA/B: A/B通道强度上限（由APP设置）
+- reconnectionTimeRemaining: 剩余重连时间（秒），仅在设备断开时显示，null表示设备已连接
 可选参数alias用于按别名过滤设备。`,
     {
       type: "object",
@@ -135,6 +136,12 @@ export function registerDeviceTools(
         // 只有 boundToApp 为 true 时才能控制设备
         const isBound = s.clientId ? wsServer.isControllerBound(s.clientId) : false;
         
+        // 计算剩余重连时间（秒）
+        const reconnectionTimeRemaining = sessionManager.getReconnectionTimeRemaining(s.deviceId);
+        const reconnectionTimeRemainingSeconds = reconnectionTimeRemaining !== null 
+          ? Math.ceil(reconnectionTimeRemaining / 1000) 
+          : null;
+        
         return {
           deviceId: s.deviceId,
           alias: s.alias,
@@ -144,6 +151,7 @@ export function registerDeviceTools(
           strengthB: s.strengthB,
           strengthLimitA: s.strengthLimitA,
           strengthLimitB: s.strengthLimitB,
+          reconnectionTimeRemaining: reconnectionTimeRemainingSeconds,
         };
       });
 
@@ -232,6 +240,12 @@ export function registerDeviceTools(
       const devices = sessions.map((s) => {
         const isBound = s.clientId ? wsServer.isControllerBound(s.clientId) : false;
         
+        // 计算剩余重连时间（秒）
+        const reconnectionTimeRemaining = sessionManager.getReconnectionTimeRemaining(s.deviceId);
+        const reconnectionTimeRemainingSeconds = reconnectionTimeRemaining !== null 
+          ? Math.ceil(reconnectionTimeRemaining / 1000) 
+          : null;
+        
         return {
           deviceId: s.deviceId,
           alias: s.alias,
@@ -241,6 +255,7 @@ export function registerDeviceTools(
           strengthB: s.strengthB,
           strengthLimitA: s.strengthLimitA,
           strengthLimitB: s.strengthLimitB,
+          reconnectionTimeRemaining: reconnectionTimeRemainingSeconds,
         };
       });
 

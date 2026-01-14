@@ -1,0 +1,25 @@
+name: Release Please
+
+# 当推送到 main 分支时触发
+on:
+  push:
+    branches:
+      - main
+
+# 需要的权限
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 1. 运行 release-please，生成版本和 Release Notes
+      - name: 🚀 运行 release-please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json

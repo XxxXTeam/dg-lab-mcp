@@ -56,8 +56,11 @@ export function createApp(): App {
   });
 
   // 创建会话管理器（仅内存，配置化超时）
-  const sessionManager = new SessionManager(config.connectionTimeoutMinutes);
-  console.log(`[会话] 仅内存模式（连接超时: ${config.connectionTimeoutMinutes} 分钟，活跃超时: 1 小时）`);
+  const sessionManager = new SessionManager(
+    config.connectionTimeoutMinutes,
+    config.reconnectionTimeoutMinutes
+  );
+  console.log(`[会话] 仅内存模式（连接超时: ${config.connectionTimeoutMinutes} 分钟，重连超时: ${config.reconnectionTimeoutMinutes} 分钟，活跃超时: 1 小时）`);
 
   // 创建 WebSocket 服务器
   const wsServer = createWSServer(config, sessionManager);

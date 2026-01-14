@@ -10,6 +10,7 @@
 - **波形管理**: 支持解析、保存、发送 DG-LAB 波形数据
 - **持续播放**: 支持波形持续循环播放
 - **会话管理**: 支持设备别名、多设备管理
+- **断线重连**: 设备断开后保留会话，支持在超时时间内重连而不丢失设置
 
 ## 安装
 
@@ -69,7 +70,8 @@ PORT=8080 npx dg-lab-mcp-sse-server
       "env": {
         "PUBLIC_IP": "your.public.ip",
         "PORT": "3323",
-        "CONNECTION_TIMEOUT_MINUTES": "10"
+        "CONNECTION_TIMEOUT_MINUTES": "10",
+        "RECONNECTION_TIMEOUT_MINUTES": "5"
       }
     }
   }
@@ -87,9 +89,27 @@ PORT=8080 npx dg-lab-mcp-sse-server
 | `SSE_PATH` | /sse | SSE 端点路径 |
 | `POST_PATH` | /message | POST 端点路径 |
 | `CONNECTION_TIMEOUT_MINUTES` | 5 | 未绑定设备的超时时间（分钟） |
+| `RECONNECTION_TIMEOUT_MINUTES` | 5 | 已绑定设备断开后的重连等待时间（分钟），超时后会话将被删除 |
 | `HEARTBEAT_INTERVAL` | 30000 | WebSocket 心跳间隔 (ms) |
 | `STALE_DEVICE_TIMEOUT` | 3600000 | 设备活跃超时 (ms)，默认 1 小时 |
 | `WAVEFORM_STORE_PATH` | ./data/waveforms.json | 波形存储路径 |
+
+## 会话管理机制
+
+### 连接超时 (CONNECTION_TIMEOUT_MINUTES)
+- 创建设备后，如果在指定时间内未完成 APP 绑定，会话将自动销毁
+- 默认 5 分钟，可通过环境变量配置
+
+### 重连超时 (RECONNECTION_TIMEOUT_MINUTES)
+- 已绑定的设备断开连接后，会话会保留一段时间等待重连
+- 在此期间设备可以重新连接而不丢失设置（强度、波形等）
+- 超时后会话将被自动删除
+- 默认 5 分钟，可通过环境变量配置
+- **注意**: 未绑定的设备断开后会立即删除，不会等待重连
+
+### 状态查询
+- 使用 `dg_list_devices` 可以看到设备的连接状态和剩余重连时间
+- 使用 `dg_get_device_status` 可以获取详细的连接信息，包括 `disconnectedAt` 和 `reconnectionTimeRemaining`
 
 ## 使用流程
 

@@ -38,6 +38,8 @@ export interface ServerConfig {
   staleDeviceTimeout: number;
   /** 连接超时时间（分钟），会话创建后在此时间内未绑定 APP 则自动销毁 */
   connectionTimeoutMinutes: number;
+  /** 重连超时时间（分钟），设备断开后在此时间内可重连而不丢失会话 */
+  reconnectionTimeoutMinutes: number;
 }
 
 /**
@@ -90,6 +92,7 @@ export function loadConfig(): ServerConfig {
     heartbeatInterval: getEnvNumber("HEARTBEAT_INTERVAL", 30000),
     staleDeviceTimeout: getEnvNumber("STALE_DEVICE_TIMEOUT", 3600000),
     connectionTimeoutMinutes: getEnvNumber("CONNECTION_TIMEOUT_MINUTES", 5),
+    reconnectionTimeoutMinutes: getEnvNumber("RECONNECTION_TIMEOUT_MINUTES", 5),
   };
 
   validateConfig(config);
@@ -160,6 +163,13 @@ function validateConfig(config: ServerConfig): void {
     throw new ConfigError(`连接超时时间无效: ${config.connectionTimeoutMinutes}，必须在 1-60 分钟范围内`, {
       code: ErrorCode.CONFIG_LOAD_FAILED,
       context: { connectionTimeoutMinutes: config.connectionTimeoutMinutes },
+    });
+  }
+
+  if (config.reconnectionTimeoutMinutes < 1 || config.reconnectionTimeoutMinutes > 60) {
+    throw new ConfigError(`重连超时时间无效: ${config.reconnectionTimeoutMinutes}，必须在 1-60 分钟范围内`, {
+      code: ErrorCode.CONFIG_LOAD_FAILED,
+      context: { reconnectionTimeoutMinutes: config.reconnectionTimeoutMinutes },
     });
   }
 }
