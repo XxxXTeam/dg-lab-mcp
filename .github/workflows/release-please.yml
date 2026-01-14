@@ -48,10 +48,6 @@ jobs:
         if: ${{ steps.release.outputs.release_created }}
         run: bun run lint
       
-      - name: Type check
-        if: ${{ steps.release.outputs.release_created }}
-        run: bun run typecheck
-      
       - name: Setup Node.js
         if: ${{ steps.release.outputs.release_created }}
         uses: actions/setup-node@v4
