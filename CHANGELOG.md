@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/admilkjs/sse-dg-lab/compare/v1.1.3...v1.2.0) (2026-01-14)
+
+
+### ✨ 新功能
+
+* 优化波形工具、修复持续播放时序和控制器断开重连 ([801e439](https://github.com/admilkjs/sse-dg-lab/commit/801e439d1298eca5a1ff5475141e9757d5a35edd))
+
 ## [1.1.3](https://github.com/admilkjs/sse-dg-lab/compare/v1.1.2...v1.1.3) (2026-01-14)
 
 
