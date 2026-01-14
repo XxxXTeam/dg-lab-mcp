@@ -39,22 +39,18 @@ jobs:
       - name: Install dependencies
         if: ${{ steps.release.outputs.release_created }}
         run: bun install
-        working-directory: dg-lab-mcp-server
       
       - name: Run tests
         if: ${{ steps.release.outputs.release_created }}
         run: bun test
-        working-directory: dg-lab-mcp-server
       
       - name: Run linting
         if: ${{ steps.release.outputs.release_created }}
         run: bun run lint
-        working-directory: dg-lab-mcp-server
       
       - name: Type check
         if: ${{ steps.release.outputs.release_created }}
         run: bun run typecheck
-        working-directory: dg-lab-mcp-server
       
       - name: Setup Node.js
         if: ${{ steps.release.outputs.release_created }}
@@ -66,12 +62,10 @@ jobs:
       - name: Build package
         if: ${{ steps.release.outputs.release_created }}
         run: bun run build
-        working-directory: dg-lab-mcp-server
       
       - name: Publish to npm
         if: ${{ steps.release.outputs.release_created }}
         run: npm publish --provenance --access public
-        working-directory: dg-lab-mcp-server
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       
