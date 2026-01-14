@@ -1,4 +1,4 @@
-# DG-LAB MCP Server
+# DG-LAB MCP SSE Server
 
 基于 MCP (Model Context Protocol) 的 DG-LAB 设备控制服务器，支持通过 AI 助手控制 DG-LAB 设备。
 
@@ -15,10 +15,10 @@
 
 ```bash
 # 全局安装
-npm install -g dg-lab-mcp-server
+npm install -g dg-lab-mcp-sse-server
 
 # 或使用 npx 直接运行
-npx dg-lab-mcp-server
+npx dg-lab-mcp-sse-server
 ```
 
 ## 快速开始
@@ -27,13 +27,13 @@ npx dg-lab-mcp-server
 
 ```bash
 # 使用默认配置
-npx dg-lab-mcp-server
+npx dg-lab-mcp-sse-server
 
 # 设置公网 IP
-PUBLIC_IP=1.2.3.4 npx dg-lab-mcp-server
+PUBLIC_IP=1.2.3.4 npx dg-lab-mcp-sse-server
 
 # 设置端口
-PORT=8080 npx dg-lab-mcp-server
+PORT=8080 npx dg-lab-mcp-sse-server
 ```
 
 ### 配置 MCP 客户端
@@ -45,7 +45,7 @@ PORT=8080 npx dg-lab-mcp-server
   "mcpServers": {
     "dg-lab": {
       "command": "npx",
-      "args": ["dg-lab-mcp-server"],
+      "args": ["dg-lab-mcp-sse-server"],
       "env": {
         "PUBLIC_IP": "你的公网IP"
       }
@@ -65,7 +65,7 @@ PORT=8080 npx dg-lab-mcp-server
   "mcpServers": {
     "dg-lab": {
       "command": "npx",
-      "args": ["dg-lab-mcp-server"],
+      "args": ["dg-lab-mcp-sse-server"],
       "env": {
         "PUBLIC_IP": "your.public.ip",
         "PORT": "3323",
