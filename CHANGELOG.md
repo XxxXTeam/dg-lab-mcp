@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/XxxXTeam/dg-lab-mcp/compare/v1.3.1...v1.3.2) (2026-01-15)
+
+
+### 🔧 其他更新
+
+* trigger release publish ([5a93d97](https://github.com/XxxXTeam/dg-lab-mcp/commit/5a93d975b17d368f0e28886d144a8ed5cd2a1950))
+
 ## [1.3.1](https://github.com/XxxXTeam/dg-lab-mcp/compare/v1.3.0...v1.3.1) (2026-01-15)
 
 
